@@ -2,38 +2,15 @@ import type { WithParts } from "../state"
 
 const SUB_AGENT_RESULT_BLOCK_REGEX = /(<task_result>\s*)([\s\S]*?)(\s*<\/task_result>)/i
 
-export function getSubAgentId(part: any): string | null {
-    const sessionId = part?.state?.metadata?.sessionId
-    if (typeof sessionId !== "string") {
-        return null
-    }
-
-    const value = sessionId.trim()
-    return value.length > 0 ? value : null
-}
-
-export function buildSubagentResultText(messages: WithParts[]): string {
-    const assistantMessages = messages.filter((message) => message.info.role === "assistant")
-    if (assistantMessages.length === 0) {
-        return ""
-    }
-
-    const lastAssistant = assistantMessages[assistantMessages.length - 1]
-    const lastText = getLastTextPart(lastAssistant)
-
-    if (assistantMessages.length < 2) {
-        return lastText
-    }
-
-    const secondToLastAssistant = assistantMessages[assistantMessages.length - 2]
-    if (!assistantMessageHasCompressTool(secondToLastAssistant)) {
-        return lastText
-    }
-
-    const secondToLastText = getLastTextPart(secondToLastAssistant)
-    return [secondToLastText, lastText].filter((text) => text.length > 0).join("\n\n")
-}
-
+/**
+ * Replaces the body of the first `<task_result>...</task_result>` block in
+ * `output` with `subAgentResultText`. Used to extend a part's `state.output`
+ * with a cached sub-agent result on a cache HIT (see issue #595).
+ *
+ * ponytail: `getSubAgentId` and `buildSubagentResultText` were removed after
+ * M4 deleted the fetch-on-miss path; the cache HIT path is the only remaining
+ * consumer of this file. The internal regex is a single non-greedy match.
+ */
 export function mergeSubagentResult(output: string, subAgentResultText: string): string {
     if (!subAgentResultText || typeof output !== "string") {
         return output
@@ -43,32 +20,5 @@ export function mergeSubagentResult(output: string, subAgentResultText: string):
         SUB_AGENT_RESULT_BLOCK_REGEX,
         (_match, openTag: string, _body: string, closeTag: string) =>
             `${openTag}${subAgentResultText}${closeTag}`,
-    )
-}
-
-function getLastTextPart(message: WithParts): string {
-    const parts = Array.isArray(message.parts) ? message.parts : []
-    for (let index = parts.length - 1; index >= 0; index--) {
-        const part = parts[index]
-        if (part.type !== "text" || typeof part.text !== "string") {
-            continue
-        }
-
-        const text = part.text.trim()
-        if (!text) {
-            continue
-        }
-
-        return text
-    }
-
-    return ""
-}
-
-function assistantMessageHasCompressTool(message: WithParts): boolean {
-    const parts = Array.isArray(message.parts) ? message.parts : []
-    return parts.some(
-        (part) =>
-            part.type === "tool" && part.tool === "compress" && part.state?.status === "completed",
     )
 }

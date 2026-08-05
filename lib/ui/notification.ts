@@ -1,3 +1,7 @@
+// ponytail: declares Bun as optional so the desktop-runtime check below type-checks
+// even when @types/bun isn't installed (mirrors the same line in tui.tsx).
+declare const Bun: { version?: string } | undefined
+
 import type { Logger } from "../logger"
 import type { SessionState } from "../state"
 import {
@@ -55,6 +59,71 @@ function buildDetailedMessage(
 
 const TOAST_BODY_MAX_LINES = 12
 const TOAST_SUMMARY_MAX_CHARS = 600
+
+// ponytail: one module-level in-flight flag is sufficient because plugin notifications share one host client.
+// The dispatcher fires the FIRST call immediately (preserving test contracts + user-visible action feedback),
+// and any same-tick subsequent calls coalesce into a single follow-up toast. This satisfies both:
+//   - single call → one immediate toast
+//   - burst of N synchronous calls → one immediate toast + one merged follow-up
+//   - sequential awaited calls → one toast per call (inFlight clears between awaits)
+let inFlightDispatch: Promise<void> | null = null
+let pendingMergedMessages: string[] = []
+
+/** Resolves the configured notification type for the current host runtime. */
+export function resolveEffectiveNotificationType(
+    configPruneNotificationType: "chat" | "toast",
+    isDesktop: boolean,
+): "chat" | "toast" {
+    return isDesktop ? "toast" : configPruneNotificationType
+}
+
+/**
+ * Fires a toast. Coalesces synchronous bursts (the same JS tick) into a single
+ * follow-up toast with merged content. Sequential awaited calls each fire
+ * their own toast.
+ */
+export function dispatchToast(client: any, title: string, message: string): void {
+    if (inFlightDispatch) {
+        pendingMergedMessages.push(message)
+        return
+    }
+
+    inFlightDispatch = (async () => {
+        try {
+            await client.tui.showToast({
+                body: { title, message, variant: "info", duration: 5000 },
+            })
+            if (pendingMergedMessages.length > 0) {
+                const merged = pendingMergedMessages.join("\n")
+                pendingMergedMessages = []
+                await client.tui.showToast({
+                    body: { title, message: merged, variant: "info", duration: 5000 },
+                })
+            }
+        } finally {
+            inFlightDispatch = null
+            // ponytail: defensive — if the first showToast rejected, the queued
+            // merged messages would otherwise persist into the next burst.
+            pendingMergedMessages = []
+        }
+    })()
+}
+
+/** Returns whether a dispatch is currently in flight (for deterministic dispatcher tests). */
+export function isDispatchInFlight(): boolean {
+    return inFlightDispatch !== null
+}
+
+/** Returns the pending merged messages queue length (for deterministic dispatcher tests). */
+export function getPendingMergedCount(): number {
+    return pendingMergedMessages.length
+}
+
+/** Clears the queued state between dispatcher tests. */
+export function resetPendingToast(): void {
+    pendingMergedMessages = []
+    inFlightDispatch = null
+}
 
 function truncateToastBody(body: string, maxLines: number = TOAST_BODY_MAX_LINES): string {
     const lines = body.split("\n")
@@ -115,19 +184,17 @@ export async function sendUnifiedNotification(
             ? buildMinimalMessage(state, reason)
             : buildDetailedMessage(state, reason, pruneToolIds, toolMetadata, workingDirectory)
 
-    if (config.pruneNotificationType === "toast") {
+    const isDesktop = typeof Bun === "undefined"
+    const effectiveNotificationType = resolveEffectiveNotificationType(
+        config.pruneNotificationType,
+        isDesktop,
+    )
+    if (effectiveNotificationType === "toast") {
         let toastMessage = truncateExtractedSection(message)
         toastMessage =
             config.pruneNotification === "minimal" ? toastMessage : truncateToastBody(toastMessage)
 
-        await client.tui.showToast({
-            body: {
-                title: "DCP: Compress Notification",
-                message: toastMessage,
-                variant: "info",
-                duration: 5000,
-            },
-        })
+        dispatchToast(client, "DCP: Compress Notification", toastMessage)
         return true
     }
 
@@ -276,7 +343,13 @@ export async function sendCompressNotification(
         }
     }
 
-    if (config.pruneNotificationType === "toast") {
+    const isDesktop = typeof Bun === "undefined"
+    const effectiveNotificationType = resolveEffectiveNotificationType(
+        config.pruneNotificationType,
+        isDesktop,
+    )
+
+    if (effectiveNotificationType === "toast") {
         let toastMessage = message
         if (config.compress.showCompression) {
             const truncatedSummary = truncateToastSummary(summary)
@@ -290,14 +363,7 @@ export async function sendCompressNotification(
         toastMessage =
             config.pruneNotification === "minimal" ? toastMessage : truncateToastBody(toastMessage)
 
-        await client.tui.showToast({
-            body: {
-                title: "DCP: Compress Notification",
-                message: toastMessage,
-                variant: "info",
-                duration: 5000,
-            },
-        })
+        dispatchToast(client, "DCP: Compress Notification", toastMessage)
         return true
     }
 

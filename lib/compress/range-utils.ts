@@ -1,4 +1,5 @@
 import type { CompressionBlock, SessionState } from "../state"
+import { formatBlockRef, parseBoundaryId } from "../message-ids"
 import { resolveAnchorMessageId, resolveBoundaryIds, resolveSelection } from "./search"
 import type {
     BoundaryReference,
@@ -10,6 +11,112 @@ import type {
 } from "./types"
 
 const BLOCK_PLACEHOLDER_REGEX = /\(b(\d+)\)|\{block_(\d+)\}/gi
+
+/** Enumerate every boundary ID the agent can currently use as a start or end
+ *  anchor in this session: every injected message ref + every active block ref.
+ *  Used to construct error messages that carry a valid-ID list so the agent
+ *  can self-correct (PLAN §6.1 acceptance criterion). */
+export function listValidBoundaryIds(state: SessionState): string[] {
+    const ids = new Set<string>()
+    for (const ref of state.messageIds.byRef.keys()) {
+        ids.add(ref)
+    }
+    for (const blockId of state.prune.messages.blocksById.keys()) {
+        const block = state.prune.messages.blocksById.get(blockId)
+        if (block && block.active) {
+            ids.add(formatBlockRef(blockId))
+        }
+    }
+    return [...ids].sort()
+}
+
+/** Check whether a single boundary ID resolves against the visible message set.
+ *  Pure: no IO. */
+export function isBoundaryIdValid(id: string, state: SessionState): boolean {
+    const parsed = parseBoundaryId(id)
+    if (parsed === null) {
+        return false
+    }
+    if (parsed.kind === "message") {
+        return state.messageIds.byRef.has(parsed.ref)
+    }
+    const block = state.prune.messages.blocksById.get(parsed.blockId)
+    return !!block && block.active
+}
+
+/** Validate that startId and endId both resolve against the currently-visible
+ *  message set. Throws with a valid-ID list (issue #573 acceptance criterion). */
+export function validateBoundaryIds(
+    startId: string,
+    endId: string,
+    state: SessionState,
+): void {
+    const issues: string[] = []
+    if (!isBoundaryIdValid(startId, state)) {
+        issues.push(
+            `startId ${startId} is not available in the current conversation context. Choose an injected ID visible in context.`,
+        )
+    }
+    if (!isBoundaryIdValid(endId, state)) {
+        issues.push(
+            `endId ${endId} is not available in the current conversation context. Choose an injected ID visible in context.`,
+        )
+    }
+    if (issues.length > 0) {
+        throw new Error(
+            issues.length === 1
+                ? issues[0]
+                : issues.map((issue) => `- ${issue}`).join("\n"),
+        )
+    }
+}
+
+/** Validate `startId <= endId` (lexical). Throws otherwise. Equality is allowed
+ *  here — the monotonicity guard in validateMonotonicEnd rejects it downstream
+ *  when relevant. */
+export function validateRangeSanity(startId: string, endId: string): void {
+    if (startId.localeCompare(endId) > 0) {
+        throw new Error(
+            `__DCP_RANGE_SANITY__: startId ${startId} must come before or equal to endId ${endId}.`,
+        )
+    }
+}
+
+/** Enforce the v2 strictly-greater anchor rule from PLAN §6.1:
+ *  newStart > prevAnchorEnd AND newEnd > prevAnchorEnd. Equality also throws
+ *  — it means zero new coverage. The error message carries a valid-ID list
+ *  so the agent can self-correct. */
+export function validateMonotonicEnd(
+    prevAnchorEnd: string,
+    newStart: string,
+    newEnd: string,
+    state: SessionState,
+): void {
+    const validNextIds = listValidBoundaryIds(state)
+    const validNextHint =
+        validNextIds.length > 0
+            ? `Valid next anchors: ${validNextIds.join(", ")}`
+            : "Valid next anchors: (none — message refs not yet injected)"
+
+    // prevAnchorEnd must itself be a valid boundary for the comparison to be meaningful.
+    if (!isBoundaryIdValid(prevAnchorEnd, state)) {
+        throw new Error(
+            `__DCP_MONOTONIC_VIOLATION__: previous anchor ${prevAnchorEnd} is not available in the current conversation context. ${validNextHint}`,
+        )
+    }
+
+    if (newStart.localeCompare(prevAnchorEnd) <= 0) {
+        throw new Error(
+            `__DCP_MONOTONIC_VIOLATION__: new start ${newStart} must be strictly greater than previous end ${prevAnchorEnd}. ${validNextHint}`,
+        )
+    }
+
+    if (newEnd.localeCompare(prevAnchorEnd) <= 0) {
+        throw new Error(
+            `__DCP_MONOTONIC_VIOLATION__: new end ${newEnd} must be strictly greater than previous end ${prevAnchorEnd}. ${validNextHint}`,
+        )
+    }
+}
 
 export function validateArgs(args: CompressRangeToolArgs): void {
     if (typeof args.topic !== "string" || args.topic.trim().length === 0) {
@@ -67,7 +174,10 @@ export function resolveRanges(
     })
 }
 
-export function validateNonOverlapping(plans: ResolvedRangeCompression[]): void {
+export function validateNonOverlapping(
+    plans: ResolvedRangeCompression[],
+    state?: SessionState,
+): void {
     const sortedPlans = [...plans].sort(
         (left, right) =>
             left.selection.startReference.rawIndex - right.selection.startReference.rawIndex ||
@@ -94,8 +204,13 @@ export function validateNonOverlapping(plans: ResolvedRangeCompression[]): void 
     }
 
     if (issues.length > 0) {
+        const validHint =
+            state !== undefined
+                ? `\nValid boundary IDs: ${listValidBoundaryIds(state).join(", ")}`
+                : ""
         throw new Error(
-            issues.length === 1 ? issues[0] : issues.map((issue) => `- ${issue}`).join("\n"),
+            (issues.length === 1 ? issues[0] : issues.map((issue) => `- ${issue}`).join("\n")) +
+                validHint,
         )
     }
 }

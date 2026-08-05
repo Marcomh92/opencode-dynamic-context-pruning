@@ -5,12 +5,8 @@ import {
     isFilePathProtected,
     isToolNameProtected,
 } from "../protected-patterns"
-import {
-    buildSubagentResultText,
-    getSubAgentId,
-    mergeSubagentResult,
-} from "../subagents/subagent-results"
-import { fetchSessionMessages } from "./search"
+import { mergeSubagentResult } from "../subagents/subagent-results"
+import { buildSubAgentCacheKey } from "../subagents/cache-key"
 import type { SearchContext, SelectionResolution } from "./types"
 
 export function appendProtectedUserMessages(
@@ -108,7 +104,7 @@ export function extractProtectedPromptInfo(text: string): string[] {
 }
 
 export async function appendProtectedTools(
-    client: any,
+    _client: any,
     state: SessionState,
     allowSubAgents: boolean,
     summary: string,
@@ -151,43 +147,35 @@ export async function appendProtectedTools(
                                 : JSON.stringify(part.state.output)
                     }
 
+                    // #595: cache HIT merges the cached subagent text into the
+                    // part's output. Cache MISS leaves `part.state.output`
+                    // untouched — the part's own output is the round-correct
+                    // value. The previous fetch-and-merge-with-current-subagent-
+                    // state behaviour was the bug. PLAN §6.5.
+                    //
+                    // Cache lookup happens unconditionally for completed task
+                    // parts so the HIT path is exercised; MISS simply skips the
+                    // merge (no fetch). When the part lacks a subagent session
+                    // ID in metadata, the composite key degenerates to a bare
+                    // callID — same observable behavior as the legacy key.
                     if (
                         allowSubAgents &&
                         part.tool === "task" &&
                         part.state?.status === "completed" &&
                         typeof part.state?.output === "string"
                     ) {
-                        const cachedSubAgentResult = state.subAgentResultCache.get(part.callID)
-
-                        if (cachedSubAgentResult !== undefined) {
-                            if (cachedSubAgentResult) {
-                                output = mergeSubagentResult(
-                                    part.state.output,
-                                    cachedSubAgentResult,
-                                )
-                            }
-                        } else {
-                            const subAgentSessionId = getSubAgentId(part)
-                            if (subAgentSessionId) {
-                                let subAgentResultText = ""
-                                try {
-                                    const subAgentMessages = await fetchSessionMessages(
-                                        client,
-                                        subAgentSessionId,
-                                    )
-                                    subAgentResultText = buildSubagentResultText(subAgentMessages)
-                                } catch {
-                                    subAgentResultText = ""
-                                }
-
-                                if (subAgentResultText) {
-                                    state.subAgentResultCache.set(part.callID, subAgentResultText)
-                                    output = mergeSubagentResult(
-                                        part.state.output,
-                                        subAgentResultText,
-                                    )
-                                }
-                            }
+                        const subAgentSessionId = part.state?.metadata?.sessionId
+                        const sessionKey =
+                            typeof subAgentSessionId === "string" && subAgentSessionId.length > 0
+                                ? subAgentSessionId
+                                : ""
+                        const cacheKey = buildSubAgentCacheKey(sessionKey, part.callID)
+                        const cachedSubAgentResult = state.subAgentResultCache.get(cacheKey)
+                        if (cachedSubAgentResult && cachedSubAgentResult.text) {
+                            output = mergeSubagentResult(
+                                part.state.output,
+                                cachedSubAgentResult.text,
+                            )
                         }
                     }
 

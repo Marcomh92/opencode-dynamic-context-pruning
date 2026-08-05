@@ -26,6 +26,8 @@ export function formatStatsMessage(
     sessionMessages: number,
     sessionDurationMs: number,
     allTime: AggregatedStats,
+    recoveryForced: boolean,
+    nonCompactingRunCount: number,
 ): string {
     const lines: string[] = []
 
@@ -42,6 +44,13 @@ export function formatStatsMessage(
     lines.push(`  Time:             ${formatCompressionTime(sessionDurationMs)}`)
     lines.push(`  Messages:         ${sessionMessages}`)
     lines.push(`  Tools:            ${sessionTools}`)
+    lines.push("")
+    lines.push("Recovery state:")
+    lines.push("─".repeat(60))
+    lines.push(
+        `  recoveryForced:    ${recoveryForced ? "YES — autonomous compress disabled" : "no"}`,
+    )
+    lines.push(`  non-compacting streak: ${nonCompactingRunCount} consecutive`)
     lines.push("")
     lines.push("All-time:")
     lines.push("─".repeat(60))
@@ -100,6 +109,8 @@ export async function handleStatsCommand(ctx: StatsCommandContext): Promise<void
         report.sessionMessages,
         report.sessionDurationMs,
         report.allTime,
+        state.recoveryForced === true,
+        state.nonCompactingRunCount ?? 0,
     )
 
     const params = getCurrentParams(state, messages, logger)

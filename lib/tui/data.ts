@@ -41,13 +41,33 @@ export async function buildSessionState(
     const state = createSessionState()
     state.sessionId = sessionID
     state.manualMode = config.manualMode.enabled ? "active" : false
+    state.userForced = config.manualMode.enabled
     state.lastCompaction = findLastCompactionTimestamp(messages)
 
     const persisted = await loadSessionState(sessionID, logger)
     if (persisted) {
         if (typeof persisted.manualMode === "boolean") {
             state.manualMode = persisted.manualMode ? "active" : false
+            state.userForced = persisted.manualMode
         }
+
+        // v2 fields: loadSessionState has already enforced the schema-version
+        // gate; any persisted file reaching here is a valid v2 file.
+        if (typeof persisted.userForced === "boolean") {
+            state.userForced = persisted.userForced
+        }
+        if (typeof persisted.recoveryForced === "boolean") {
+            state.recoveryForced = persisted.recoveryForced
+        }
+        if (typeof persisted.nonCompactingRunCount === "number") {
+            state.nonCompactingRunCount = persisted.nonCompactingRunCount
+        }
+        if (typeof persisted.recoveryFadeCounter === "number") {
+            state.recoveryFadeCounter = persisted.recoveryFadeCounter
+        }
+
+        // Re-derive the manualMode cache from the now-merged flags.
+        state.manualMode = state.userForced || state.recoveryForced ? "active" : false
 
         state.prune.tools = loadPruneMap(persisted.prune.tools)
         state.prune.messages = loadPruneMessagesState(persisted.prune.messages)

@@ -1,7 +1,7 @@
 {
     "$schema": "https://json.schemastore.org/package.json",
     "name": "@tarquinen/opencode-dcp",
-    "version": "3.1.14",
+    "version": "3.1.17",
     "type": "module",
     "description": "OpenCode plugin that optimizes token usage by pruning obsolete tool outputs from conversation context",
     "main": "./dist/index.js",
@@ -61,7 +61,8 @@
     "dependencies": {
         "@anthropic-ai/tokenizer": "^0.0.4",
         "@opencode-ai/sdk": "^1.4.3",
-        "jsonc-parser": "^3.3.1"
+        "jsonc-parser": "^3.3.1",
+        "tiktoken": "^1.0.10"
     },
     "devDependencies": {
         "@opencode-ai/plugin": "^1.4.3",

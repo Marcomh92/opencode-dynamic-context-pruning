@@ -27,6 +27,12 @@ export interface CompressConfig {
     protectedTools: string[]
     protectTags: boolean
     protectUserMessages: boolean
+    // v2 fork protocol (issue #573 + #590, PLAN §6.1-§6.3).
+    maxCompactionRatio: number
+    maxContextLimitRecovery: number
+    recoveryFadeWindow: number
+    forkSchemaVersion: number
+    stateMaxAgeDays: number | null
 }
 
 export interface Commands {
@@ -126,6 +132,11 @@ export const VALID_CONFIG_KEYS = new Set([
     "compress.protectedTools",
     "compress.protectTags",
     "compress.protectUserMessages",
+    "compress.maxCompactionRatio",
+    "compress.maxContextLimitRecovery",
+    "compress.recoveryFadeWindow",
+    "compress.forkSchemaVersion",
+    "compress.stateMaxAgeDays",
     "strategies",
     "strategies.deduplication",
     "strategies.deduplication.enabled",
@@ -532,6 +543,103 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     actual: typeof compress.showCompression,
                 })
             }
+
+            // v2 fork-protocol keys (issue #573 + #590).
+            if (
+                compress.maxCompactionRatio !== undefined &&
+                typeof compress.maxCompactionRatio !== "number"
+            ) {
+                errors.push({
+                    key: "compress.maxCompactionRatio",
+                    expected: "number",
+                    actual: typeof compress.maxCompactionRatio,
+                })
+            }
+            if (
+                typeof compress.maxCompactionRatio === "number" &&
+                (compress.maxCompactionRatio <= 0 || compress.maxCompactionRatio > 1)
+            ) {
+                errors.push({
+                    key: "compress.maxCompactionRatio",
+                    expected: "number in (0, 1]",
+                    actual: `${compress.maxCompactionRatio} (will be clamped)`,
+                })
+            }
+
+            if (
+                compress.maxContextLimitRecovery !== undefined &&
+                typeof compress.maxContextLimitRecovery !== "number"
+            ) {
+                errors.push({
+                    key: "compress.maxContextLimitRecovery",
+                    expected: "number",
+                    actual: typeof compress.maxContextLimitRecovery,
+                })
+            }
+            if (
+                typeof compress.maxContextLimitRecovery === "number" &&
+                compress.maxContextLimitRecovery < 1
+            ) {
+                errors.push({
+                    key: "compress.maxContextLimitRecovery",
+                    expected: "positive number (>= 1)",
+                    actual: `${compress.maxContextLimitRecovery} (will be clamped to 1)`,
+                })
+            }
+
+            if (
+                compress.recoveryFadeWindow !== undefined &&
+                typeof compress.recoveryFadeWindow !== "number"
+            ) {
+                errors.push({
+                    key: "compress.recoveryFadeWindow",
+                    expected: "number",
+                    actual: typeof compress.recoveryFadeWindow,
+                })
+            }
+            if (
+                typeof compress.recoveryFadeWindow === "number" &&
+                compress.recoveryFadeWindow < 1
+            ) {
+                errors.push({
+                    key: "compress.recoveryFadeWindow",
+                    expected: "positive number (>= 1)",
+                    actual: `${compress.recoveryFadeWindow} (will be clamped to 1)`,
+                })
+            }
+
+            if (
+                compress.forkSchemaVersion !== undefined &&
+                typeof compress.forkSchemaVersion !== "number"
+            ) {
+                errors.push({
+                    key: "compress.forkSchemaVersion",
+                    expected: "number",
+                    actual: typeof compress.forkSchemaVersion,
+                })
+            }
+
+            if (
+                compress.stateMaxAgeDays !== undefined &&
+                compress.stateMaxAgeDays !== null &&
+                typeof compress.stateMaxAgeDays !== "number"
+            ) {
+                errors.push({
+                    key: "compress.stateMaxAgeDays",
+                    expected: "number | null",
+                    actual: typeof compress.stateMaxAgeDays,
+                })
+            }
+            if (
+                typeof compress.stateMaxAgeDays === "number" &&
+                compress.stateMaxAgeDays < 0
+            ) {
+                errors.push({
+                    key: "compress.stateMaxAgeDays",
+                    expected: "non-negative number or null",
+                    actual: `${compress.stateMaxAgeDays}`,
+                })
+            }
         }
     }
 
@@ -689,6 +797,11 @@ const defaultConfig: PluginConfig = {
         protectedTools: [...COMPRESS_DEFAULT_PROTECTED_TOOLS],
         protectTags: false,
         protectUserMessages: false,
+        maxCompactionRatio: 0.7,
+        maxContextLimitRecovery: 3,
+        recoveryFadeWindow: 5,
+        forkSchemaVersion: 3,
+        stateMaxAgeDays: null,
     },
     strategies: {
         deduplication: {
@@ -855,7 +968,35 @@ function mergeCompress(
         protectedTools: [...new Set([...base.protectedTools, ...(override.protectedTools ?? [])])],
         protectTags: override.protectTags ?? base.protectTags,
         protectUserMessages: override.protectUserMessages ?? base.protectUserMessages,
+        // v2 fork protocol
+        maxCompactionRatio: clampRatio(override.maxCompactionRatio ?? base.maxCompactionRatio),
+        maxContextLimitRecovery: clampMin1(
+            override.maxContextLimitRecovery ?? base.maxContextLimitRecovery,
+        ),
+        recoveryFadeWindow: clampMin1(override.recoveryFadeWindow ?? base.recoveryFadeWindow),
+        forkSchemaVersion: override.forkSchemaVersion ?? base.forkSchemaVersion,
+        stateMaxAgeDays: clampNullOrNonNeg(
+            override.stateMaxAgeDays === undefined ? base.stateMaxAgeDays : override.stateMaxAgeDays,
+        ),
     }
+}
+
+function clampRatio(value: number): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) return 0.7
+    if (value <= 0) return 0.7
+    if (value > 1) return 1
+    return value
+}
+
+function clampMin1(value: number): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) return 1
+    return value < 1 ? 1 : value
+}
+
+function clampNullOrNonNeg(value: number | null | undefined): number | null {
+    if (value === null || value === undefined) return null
+    if (typeof value !== "number" || !Number.isFinite(value)) return null
+    return value < 0 ? 0 : value
 }
 
 function mergeCommands(

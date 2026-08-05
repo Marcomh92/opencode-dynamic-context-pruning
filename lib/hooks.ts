@@ -46,6 +46,16 @@ const INTERNAL_AGENT_SIGNATURES = [
     "Summarize what was done in this conversation",
 ]
 
+/** True only when every supplied system prompt is from an internal OpenCode agent. */
+export function isInternalAgentSystem(systemPrompts: string[]): boolean {
+    if (systemPrompts.length === 0) {
+        return false
+    }
+    return systemPrompts.every((prompt) =>
+        INTERNAL_AGENT_SIGNATURES.some((sig) => prompt.includes(sig)),
+    )
+}
+
 export function createSystemPromptHandler(
     state: SessionState,
     logger: Logger,
@@ -65,8 +75,7 @@ export function createSystemPromptHandler(
             return
         }
 
-        const systemText = output.system.join("\n")
-        if (INTERNAL_AGENT_SIGNATURES.some((sig) => systemText.includes(sig))) {
+        if (isInternalAgentSystem(output.system)) {
             logger.info("Skipping DCP system prompt injection for internal agent")
             return
         }

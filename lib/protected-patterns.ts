@@ -1,5 +1,6 @@
+// normalize backslashes to forward slashes for cross-platform glob matching
 function normalizePath(input: string): string {
-    return input.replaceAll("\\\\", "/")
+    return input.replaceAll("\\", "/") // single backslash, both path and pattern
 }
 
 function escapeRegExpChar(ch: string): string {

@@ -1,25 +1,29 @@
 import type { Logger } from "../../logger"
 import type { SessionState, WithParts } from "../../state"
-import { filterMessages } from "../shape"
-import {
-    buildSubagentResultText,
-    getSubAgentId,
-    mergeSubagentResult,
-} from "../../subagents/subagent-results"
+import { mergeSubagentResult } from "../../subagents/subagent-results"
+import { buildSubAgentCacheKey } from "../../subagents/cache-key"
 import { stripHallucinationsFromString } from "../utils"
 
-async function fetchSubAgentMessages(client: any, sessionId: string): Promise<WithParts[]> {
-    const response = await client.session.messages({
-        path: { id: sessionId },
-    })
-
-    return filterMessages(response?.data || response)
-}
-
+/** Inject the original subagent result back into task parts in the live
+ *  message stream. Issue #595 fix:
+ *
+ *  On cache HIT (composite key `${subAgentSessionId}::${callID}`), merge the
+ *  cached text into the part's output as before.
+ *
+ *  On cache MISS, do NOT fetch the subagent session — leave `part.state.output`
+ *  untouched. The part was created with that output at the time of the call
+ *  and is the round-correct value. The previous fetch-and-merge-with-current-
+ *  subagent-state behaviour is exactly the bug: the subagent session's CURRENT
+ *  state is the latest round's text, so re-fetching poisons the older round's
+ *  cached value. PLAN §5.9/§6.5.
+ *
+ *  ponytail: fetch removed entirely. If the part has no `state.output` of its
+ *  own (call never produced output), the cache miss simply yields no extension,
+ *  which is correct — there is nothing to extend. */
 export const injectExtendedSubAgentResults = async (
-    client: any,
+    _client: any,
     state: SessionState,
-    logger: Logger,
+    _logger: Logger,
     messages: WithParts[],
     allowSubAgents: boolean,
 ): Promise<void> => {
@@ -41,41 +45,19 @@ export const injectExtendedSubAgentResults = async (
                 continue
             }
 
-            const cachedResult = state.subAgentResultCache.get(part.callID)
-            if (cachedResult !== undefined) {
-                if (cachedResult) {
-                    part.state.output = stripHallucinationsFromString(
-                        mergeSubagentResult(part.state.output, cachedResult),
-                    )
-                }
+            const subAgentSessionId = part.state?.metadata?.sessionId
+            const sessionKey =
+                typeof subAgentSessionId === "string" && subAgentSessionId.length > 0
+                    ? subAgentSessionId
+                    : ""
+            const cacheKey = buildSubAgentCacheKey(sessionKey, part.callID)
+            const cachedResult = state.subAgentResultCache.get(cacheKey)
+            if (!cachedResult || !cachedResult.text) {
                 continue
             }
 
-            const subAgentSessionId = getSubAgentId(part)
-            if (!subAgentSessionId) {
-                continue
-            }
-
-            let subAgentMessages: WithParts[] = []
-            try {
-                subAgentMessages = await fetchSubAgentMessages(client, subAgentSessionId)
-            } catch (error) {
-                logger.warn("Failed to fetch subagent session for output expansion", {
-                    subAgentSessionId,
-                    callID: part.callID,
-                    error: error instanceof Error ? error.message : String(error),
-                })
-                continue
-            }
-
-            const subAgentResultText = buildSubagentResultText(subAgentMessages)
-            if (!subAgentResultText) {
-                continue
-            }
-
-            state.subAgentResultCache.set(part.callID, subAgentResultText)
             part.state.output = stripHallucinationsFromString(
-                mergeSubagentResult(part.state.output, subAgentResultText),
+                mergeSubagentResult(part.state.output, cachedResult.text),
             )
         }
     }

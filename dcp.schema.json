@@ -246,6 +246,38 @@
                     "type": "boolean",
                     "default": false,
                     "description": "When enabled, your messages are never lost during compression"
+                },
+                "maxCompactionRatio": {
+                    "type": "number",
+                    "default": 0.7,
+                    "exclusiveMinimum": 0,
+                    "maximum": 1,
+                    "description": "Net-compaction guard. A compress block is refused (thrown tool error, model-visible) when summaryTokens >= removedTokens * maxCompactionRatio. Lower values are stricter. See PLAN §6.1."
+                },
+                "maxContextLimitRecovery": {
+                    "type": "number",
+                    "default": 3,
+                    "minimum": 1,
+                    "description": "After this many consecutive non-compacting compress calls, autonomous compress is disabled for the rest of the session (recoveryForced). Manual /dcp-compress remains available as the recovery lever. Cleared by recoveryFadeWindow consecutive good manual compresses. See PLAN §6.2."
+                },
+                "recoveryFadeWindow": {
+                    "type": "number",
+                    "default": 5,
+                    "minimum": 1,
+                    "description": "Number of consecutive good manual compresses required to clear recoveryForced after auto-disable. See PLAN §6.2."
+                },
+                "forkSchemaVersion": {
+                    "type": "number",
+                    "default": 3,
+                    "description": "Persisted-state shape version. Bumped on any change to PersistedSessionState (v3 = #595 subagent cache shape). On load, mismatched state is dropped and a startup log line names the dropped version. See PLAN §6.3."
+                },
+                "stateMaxAgeDays": {
+                    "oneOf": [
+                        { "type": "number", "minimum": 0 },
+                        { "type": "null" }
+                    ],
+                    "default": null,
+                    "description": "Optional paranoia wall-clock window for state invalidation (days). null (default) means no expiry across schema versions. See PLAN §6.3."
                 }
             },
             "default": {
@@ -260,7 +292,12 @@
                 "nudgeForce": "soft",
                 "protectedTools": [],
                 "protectTags": false,
-                "protectUserMessages": false
+                "protectUserMessages": false,
+                "maxCompactionRatio": 0.7,
+                "maxContextLimitRecovery": 3,
+                "recoveryFadeWindow": 5,
+                "forkSchemaVersion": 3,
+                "stateMaxAgeDays": null
             }
         },
         "strategies": {

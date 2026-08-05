@@ -74,7 +74,7 @@ export function createCompressRangeTool(ctx: ToolContext): ReturnType<typeof too
                 `Compress Range: ${input.topic}`,
             )
             const resolvedPlans = resolveRanges(input, searchContext, ctx.state)
-            validateNonOverlapping(resolvedPlans)
+            validateNonOverlapping(resolvedPlans, ctx.state)
 
             const notifications: NotificationEntry[] = []
             const preparedPlans: Array<{
@@ -181,6 +181,7 @@ export function createCompressRangeTool(ctx: ToolContext): ReturnType<typeof too
                     runId,
                     summary: preparedPlan.finalSummary,
                     summaryTokens,
+                    compressedTokens: applied.compressedTokens,
                 })
             }
 

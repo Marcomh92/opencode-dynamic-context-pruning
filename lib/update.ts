@@ -19,6 +19,11 @@ const PACKAGE_NAME = "@tarquinen/opencode-dcp"
 export function startAutoUpdate(ctx: PluginInput, enabled: boolean): void {
     if (!enabled) return
 
+    // Local-install fork has no upstream registry to query, so autoUpdate is inert.
+    // Set DCP_LOCAL_FORK=1 in the OpenCode plugin entrypoint to skip the network probe
+    // and avoid spurious fetch/abort noise under file:// install (see fork PLAN.md §7).
+    if (process.env.DCP_LOCAL_FORK === "1") return
+
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 10_000)
     void checkAutoUpdate(controller.signal)

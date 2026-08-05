@@ -63,10 +63,19 @@ export async function handleManualToggleCommand(
 
     if (modeArg === "on") {
         state.manualMode = "active"
+        // v2 protocol: userForced tracks explicit user intent. recoveryForced
+        // is preserved — `/dcp manual on` does not clear it (architect decision
+        // per PLAN §6.2).
+        state.userForced = true
     } else if (modeArg === "off") {
         state.manualMode = false
+        // v2 protocol: `/dcp manual off` clears userForced ONLY. recoveryForced
+        // must be preserved — only session end, OpenCode restart, or
+        // recoveryFadeWindow consecutive good manual compresses clears it.
+        state.userForced = false
     } else {
         state.manualMode = state.manualMode ? false : "active"
+        state.userForced = !!state.manualMode
     }
 
     const params = getCurrentParams(state, messages, logger)

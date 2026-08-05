@@ -1,4 +1,5 @@
 import type { SessionState, ToolParameterEntry, WithParts } from "./types"
+import { CachedSubAgentResult, FORK_SCHEMA_VERSION } from "./types"
 import type { Logger } from "../logger"
 import { applyPendingCompressionDurations } from "../compress/timing"
 import { loadManualModeSetting, loadSessionState, saveSessionState } from "./persistence"
@@ -68,6 +69,11 @@ export function createSessionState(): SessionState {
         sessionId: null,
         isSubAgent: false,
         manualMode: false,
+        userForced: false,
+        recoveryForced: false,
+        nonCompactingRunCount: 0,
+        recoveryFadeCounter: 0,
+        forkSchemaVersion: FORK_SCHEMA_VERSION,
         compressPermission: undefined,
         pendingManualTrigger: null,
         prune: {
@@ -88,7 +94,7 @@ export function createSessionState(): SessionState {
             pendingByCallId: new Map(),
         },
         toolParameters: new Map<string, ToolParameterEntry>(),
-        subAgentResultCache: new Map<string, string>(),
+        subAgentResultCache: new Map<string, CachedSubAgentResult>(),
         toolIdList: [],
         messageIds: {
             byRawId: new Map<string, string>(),
@@ -106,6 +112,11 @@ export function resetSessionState(state: SessionState): void {
     state.sessionId = null
     state.isSubAgent = false
     state.manualMode = false
+    state.userForced = false
+    state.recoveryForced = false
+    state.nonCompactingRunCount = 0
+    state.recoveryFadeCounter = 0
+    state.forkSchemaVersion = FORK_SCHEMA_VERSION
     state.compressPermission = undefined
     state.pendingManualTrigger = null
     state.prune = {
@@ -151,6 +162,7 @@ export async function ensureSessionInitialized(
     // logger.info("Initializing session state", { sessionId: sessionId })
 
     resetSessionState(state)
+    state.userForced = manualModeEnabled
     state.manualMode = manualModeEnabled ? "active" : false
     state.sessionId = sessionId
 
@@ -167,9 +179,34 @@ export async function ensureSessionInitialized(
         return
     }
 
+    // The persisted state's legacy `manualMode: boolean` is the only signal we
+    // have for a user-enabled manual mode on load (v1 storage didn't carry
+    // userForced). recoveryForced and the counters are intentionally NOT
+    // restored — they reset on every session load (architect decision: drop,
+    // don't migrate, on the v1→v2 boundary).
     if (typeof persisted.manualMode === "boolean") {
+        state.userForced = persisted.manualMode
         state.manualMode = persisted.manualMode ? "active" : false
     }
+
+    // v2 fields: apply loaded values when present. The schema-version gate in
+    // loadSessionState has already filtered out mismatched files, so anything
+    // that reaches here is a valid v2 file.
+    if (typeof persisted.userForced === "boolean") {
+        state.userForced = persisted.userForced
+    }
+    if (typeof persisted.recoveryForced === "boolean") {
+        state.recoveryForced = persisted.recoveryForced
+    }
+    if (typeof persisted.nonCompactingRunCount === "number") {
+        state.nonCompactingRunCount = persisted.nonCompactingRunCount
+    }
+    if (typeof persisted.recoveryFadeCounter === "number") {
+        state.recoveryFadeCounter = persisted.recoveryFadeCounter
+    }
+
+    // Re-derive the manualMode cache from the now-merged flags.
+    state.manualMode = state.userForced || state.recoveryForced ? "active" : false
 
     state.prune.tools = loadPruneMap(persisted.prune.tools)
     state.prune.messages = loadPruneMessagesState(persisted.prune.messages)
@@ -204,5 +241,8 @@ export async function refreshManualMode(
 
     const persisted = await loadManualModeSetting(sessionId, logger)
     const enabled = persisted ?? manualModeDefault
-    state.manualMode = enabled ? "active" : false
+    state.userForced = enabled
+    // recoveryForced is preserved across refresh — only session end, restart, or
+    // a streak of good compresses clears it. manualMode is the derived cache.
+    state.manualMode = state.userForced || state.recoveryForced ? "active" : false
 }

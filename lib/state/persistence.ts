@@ -9,6 +9,7 @@ import { existsSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
 import type { CompressionBlock, PrunedMessageEntry, SessionState, SessionStats } from "./types"
+import { FORK_SCHEMA_VERSION } from "./types"
 import type { Logger } from "../logger"
 import { serializePruneMessagesState } from "./utils"
 
@@ -35,7 +36,16 @@ export interface PersistedNudges {
 
 export interface PersistedSessionState {
     sessionName?: string
+    // Legacy v1 field, retained on the write side so older forks can still
+    // detect a user-enabled manual mode on load. The load validation is solely
+    // on forkSchemaVersion (see below).
     manualMode?: boolean
+    // v2 fork-protocol fields (issue #573 + #590).
+    userForced?: boolean
+    recoveryForced?: boolean
+    nonCompactingRunCount?: number
+    recoveryFadeCounter?: number
+    forkSchemaVersion?: number
     prune: PersistedPrune
     nudges: PersistedNudges
     stats: SessionStats
@@ -50,14 +60,30 @@ const STORAGE_DIR = join(
     "dcp",
 )
 
+/** Resolve the storage directory at call-time so per-test XDG_DATA_HOME
+ *  overrides (set after this module was first imported) take effect.
+ *  ponytail: this exists because module-top-level `const STORAGE_DIR`
+ *  captures process.env at first import; tests that mutate env mid-run
+ *  need a fresh read. Add when no test framework can hijack import order. */
+function resolveStorageDir(): string {
+    return join(
+        process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
+        "opencode",
+        "storage",
+        "plugin",
+        "dcp",
+    )
+}
+
 async function ensureStorageDir(): Promise<void> {
-    if (!existsSync(STORAGE_DIR)) {
-        await fs.mkdir(STORAGE_DIR, { recursive: true })
+    const dir = resolveStorageDir()
+    if (!existsSync(dir)) {
+        await fs.mkdir(dir, { recursive: true })
     }
 }
 
 function getSessionFilePath(sessionId: string): string {
-    return join(STORAGE_DIR, `${sessionId}.json`)
+    return join(resolveStorageDir(), `${sessionId}.json`)
 }
 
 async function writePersistedSessionState(
@@ -89,7 +115,15 @@ export async function saveSessionState(
 
         const state: PersistedSessionState = {
             sessionName: sessionName,
-            manualMode: !!sessionState.manualMode,
+            // #590 mirror: only persist `true` when manualMode is genuinely "active".
+            // The legacy `manualMode?: boolean` field is preserved for backward compat
+            // with older forks; v2 load validation uses forkSchemaVersion instead.
+            manualMode: sessionState.manualMode === "active",
+            userForced: sessionState.userForced,
+            recoveryForced: sessionState.recoveryForced,
+            nonCompactingRunCount: sessionState.nonCompactingRunCount,
+            recoveryFadeCounter: sessionState.recoveryFadeCounter,
+            forkSchemaVersion: sessionState.forkSchemaVersion,
             prune: {
                 tools: Object.fromEntries(sessionState.prune.tools),
                 messages: serializePruneMessagesState(sessionState.prune.messages),
@@ -191,6 +225,21 @@ export async function loadSessionState(
         }
         state.nudges.iterationNudgeAnchors = dedupedIterationAnchors
 
+        // v2 schema-version gate (issue #590 + PLAN §6.3). Older state (no
+        // forkSchemaVersion field, or v1) and newer state (a future fork we
+        // can't read) are both dropped. The startup log line names the dropped
+        // version so the user can correlate with a plugin upgrade.
+        if (
+            typeof state.forkSchemaVersion !== "number" ||
+            state.forkSchemaVersion !== FORK_SCHEMA_VERSION
+        ) {
+            logger.warn(
+                `Dropping persisted session state: forkSchemaVersion mismatch (got ${state.forkSchemaVersion ?? "missing"}, expected ${FORK_SCHEMA_VERSION})`,
+                { sessionId: sessionId, droppedVersion: state.forkSchemaVersion ?? null },
+            )
+            return null
+        }
+
         logger.info("Loaded session state from disk", {
             sessionId: sessionId,
         })
@@ -208,6 +257,10 @@ export async function loadSessionState(
 function emptyPersistedState(manualMode: boolean): PersistedSessionState {
     return {
         manualMode,
+        userForced: manualMode,
+        recoveryForced: false,
+        nonCompactingRunCount: 0,
+        forkSchemaVersion: FORK_SCHEMA_VERSION,
         prune: {
             tools: {},
             messages: {
@@ -268,16 +321,17 @@ export async function loadAllSessionStats(logger: Logger): Promise<AggregatedSta
     }
 
     try {
-        if (!existsSync(STORAGE_DIR)) {
+        const dir = resolveStorageDir()
+        if (!existsSync(dir)) {
             return result
         }
 
-        const files = await fs.readdir(STORAGE_DIR)
+        const files = await fs.readdir(dir)
         const jsonFiles = files.filter((f) => f.endsWith(".json"))
 
         for (const file of jsonFiles) {
             try {
-                const filePath = join(STORAGE_DIR, file)
+                const filePath = join(dir, file)
                 const content = await fs.readFile(filePath, "utf-8")
                 const state = JSON.parse(content) as PersistedSessionState
 
