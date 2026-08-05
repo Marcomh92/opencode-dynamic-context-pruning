@@ -11,7 +11,7 @@ import { join } from "path"
 import type { CompressionBlock, PrunedMessageEntry, SessionState, SessionStats } from "./types"
 import { FORK_SCHEMA_VERSION } from "./types"
 import type { Logger } from "../logger"
-import { serializePruneMessagesState } from "./utils"
+import { flushPruneStats, serializePruneMessagesState } from "./utils"
 
 /** Prune state as stored on disk */
 export interface PersistedPruneMessagesState {
@@ -113,6 +113,13 @@ export async function saveSessionState(
             return
         }
 
+        // M2.5c Fix 2 — flush the counter into total before serialising. The
+        // counter is in-memory transient state; if we save it non-zero, the
+        // next loader sees a partial flush and would double-count on its
+        // next write (sweep / compress / nudge). Flushing here guarantees
+        // that whatever hits disk is the post-flush state.
+        flushPruneStats(sessionState.stats)
+
         const state: PersistedSessionState = {
             sessionName: sessionName,
             // #590 mirror: only persist `true` when manualMode is genuinely "active".
@@ -137,6 +144,43 @@ export async function saveSessionState(
             lastUpdated: new Date().toISOString(),
         }
 
+        // M2.5c Fix 2 — monotonic merge on save. The transform hook reloads
+        // state from disk on every fire (intentional multi-instance sync,
+        // see `loadOnEveryFire` rationale above), but two writers can race
+        // if both load before either saves. last-writer-wins would lose the
+        // earlier writer's contribution to totalPruneTokens. Read disk,
+        // take max, write. Ponytail: the read is one JSON parse on the same
+        // path we already wrote — adds one syscall per save, acceptable
+        // because saveSessionState is coalesced per microtask (see
+        // coalesceSaveSessionState). The schema-version + age gates are
+        // already passed before this read, so we know the file shape is v3.
+        //
+        // Residual cross-process race (acknowledged in plan §3 Fix 2):
+        // process A reads disk (= 100), computes max (= 110); process B
+        // saves (writes 200); process A writes 110, overwriting B's 200.
+        // The window is one fs roundtrip per save, the value is monotonically
+        // increasing, and the worst case is one lost contribution. The fork
+        // does not coordinate TUI + Desktop sidecars across processes; if
+        // multi-process parity ever matters, add an advisory lock (flock on
+        // POSIX, LockFileEx on Windows) before the read+write. Documented in
+        // MY_CHANGELOG.md M2.5c entry under "residual race".
+        try {
+            const filePath = getSessionFilePath(sessionState.sessionId)
+            if (existsSync(filePath)) {
+                const content = await fs.readFile(filePath, "utf-8")
+                const onDisk = JSON.parse(content) as PersistedSessionState
+                if (typeof onDisk.stats?.totalPruneTokens === "number") {
+                    state.stats.totalPruneTokens = Math.max(
+                        state.stats.totalPruneTokens,
+                        onDisk.stats.totalPruneTokens,
+                    )
+                }
+            }
+        } catch {
+            // Merge is best-effort; a failed read falls through to the plain
+            // write. The save-error catch below still reports any write error.
+        }
+
         await writePersistedSessionState(sessionState.sessionId, state, logger)
     } catch (error: any) {
         logger.error("Failed to save session state", {
@@ -144,6 +188,42 @@ export async function saveSessionState(
             error: error?.message,
         })
     }
+}
+
+// M2.5c Fix 5 — coalesce saveSessionState. The transform hook can fire
+// many times per second; each `void saveSessionState(state, logger)` in
+// inject.ts spawns a full file write. With one coalesced write per
+// microtask tick we get O(1) writes per transform fire instead of O(N).
+// Ponytail: a microtask coalescer is sufficient because the transform
+// hook is synchronous from call to return — all nudge-mutating sites in
+// the same hook fire before the next microtask. If a caller needs
+// strong save-on-await semantics, await saveSessionState() directly.
+const saveScheduledBySession = new Map<string, boolean>()
+
+export function coalesceSaveSessionState(
+    sessionState: SessionState,
+    logger: Logger,
+    sessionName?: string,
+): void {
+    const sessionId = sessionState.sessionId
+    if (!sessionId) {
+        return
+    }
+    if (saveScheduledBySession.get(sessionId) === true) {
+        return
+    }
+    saveScheduledBySession.set(sessionId, true)
+    queueMicrotask(() => {
+        saveScheduledBySession.set(sessionId, false)
+        void saveSessionState(sessionState, logger, sessionName).catch((err: any) =>
+            logger.warn("Coalesced save failed", { sessionId, error: err?.message }),
+        )
+    })
+}
+
+/** Test-only — clear the coalescer state between tests. */
+export function resetSaveCoalescer(): void {
+    saveScheduledBySession.clear()
 }
 
 export async function loadSessionState(
@@ -265,6 +345,14 @@ export async function loadSessionState(
         logger.info("Loaded session state from disk", {
             sessionId: sessionId,
         })
+
+        // M2.5c Fix 2 — flush the persisted counter into the lifetime total
+        // on load. A counter >0 on disk means a prior writer crashed between
+        // `counter += x` and the save; without the flush, the next writer
+        // would add its own counter on top and double-count. ponytail: the
+        // flush is in-place on the returned snapshot — callers that assign
+        // into SessionState get the post-flush numbers automatically.
+        flushPruneStats(state.stats)
 
         return state
     } catch (error: any) {

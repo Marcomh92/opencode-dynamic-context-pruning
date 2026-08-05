@@ -1,5 +1,6 @@
 import type { CompressionBlock, PruneMessagesState, SessionState } from "../state"
 import { formatBlockRef, formatMessageIdTag } from "../message-ids"
+import { flushPruneStats } from "../state/utils"
 import type { AppliedCompressionResult, CompressionStateInput, SelectionResolution } from "./types"
 
 export const COMPRESSED_BLOCK_HEADER = "[Compressed conversation section]"
@@ -255,9 +256,27 @@ export function applyCompressionState(
 
     block.compressedTokens = compressedTokens
 
+    // M2.5c Fix 3 — prune.tools propagation. Block records which tool parts
+    // it newly covered via directToolIds; without propagating those into
+    // state.prune.tools, the next transform's pruneToolOutputs early-returns
+    // for these IDs (see lib/messages/prune.ts:84). Whole compressed messages
+    // are already filtered by filterCompressedRanges so this is purely
+    // defensive — it matters only for tools referenced from non-compressed
+    // messages (e.g. a single tool part surviving outside the compressed
+    // range whose callID also appears in the block's direct set).
+    for (const toolId of newlyCompressedToolIds) {
+        if (state.prune.tools.has(toolId)) {
+            continue
+        }
+        const tokenCount = state.toolParameters.get(toolId)?.tokenCount ?? 0
+        state.prune.tools.set(toolId, tokenCount)
+    }
+
     state.stats.pruneTokenCounter += compressedTokens
-    state.stats.totalPruneTokens += state.stats.pruneTokenCounter
-    state.stats.pruneTokenCounter = 0
+    // M2.5c Fix 2 — centralised flush. The previous inline
+    // `totalPruneTokens += pruneTokenCounter; counter = 0` could
+    // double-count when counter had been pre-flushed by a sibling writer.
+    flushPruneStats(state.stats)
 
     return {
         compressedTokens,

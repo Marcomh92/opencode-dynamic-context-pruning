@@ -23,6 +23,7 @@ import {
     isToolNameProtected,
 } from "../protected-patterns"
 import { syncToolCache } from "../state/tool-cache"
+import { flushPruneStats } from "../state/utils"
 
 export interface SweepCommandContext {
     client: any
@@ -227,8 +228,8 @@ export async function handleSweepCommand(ctx: SweepCommandContext): Promise<void
         state.prune.tools.set(id, entry?.tokenCount ?? 0)
     }
     state.stats.pruneTokenCounter += tokensSaved
-    state.stats.totalPruneTokens += state.stats.pruneTokenCounter
-    state.stats.pruneTokenCounter = 0
+    // M2.5c Fix 2 — centralised flush (was duplicated here + lib/compress/state.ts).
+    flushPruneStats(state.stats)
 
     // Collect metadata for logging
     const toolMetadata: Map<string, ToolParameterEntry> = new Map()

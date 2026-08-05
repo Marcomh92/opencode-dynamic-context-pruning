@@ -9,8 +9,8 @@
 - **Local Path:** `C:\Beheer\OpenCode\opencode_plugins\opencode-dynamic-context-pruning-fork` (relocated 2026-08-05 from initial `C:\Users\marco\.config\opencode_plugins\opencode-dynamic-context-pruning-fork` to match the user's existing plugin-dir convention)
 - **Fork Reason:** Local-only fork to fix 9 known upstream bugs (#592, #579, #573, #590, #588, #585, #575, #581, #595) and add a v2 reliable autonomous compress protocol. NOT published to npm; loaded via `file://` directory entry in `opencode.json`.
 - **Starting Version:** 3.1.14 (upstream HEAD at fork time)
-- **Current Version:** **3.1.17** (M1+M2+M3+M4+M5 all landed; plan §8 complete minus M6 CI)
-- **Working Branch:** `fork/dcp-3.1.15-m1` (still on the M1 branch; one cumulative release per the plan's 3.1.15 / 3.1.16 / 3.1.17 versioning)
+- **Current Version:** **3.1.18** (M1+M2+M3+M4+M5+M2.5c all landed; plan §8 complete minus M6 CI)
+- **Working Branch:** `fork/dcp-3.1.15-m1` (still on the M1 branch; one cumulative release per the plan's 3.1.15 / 3.1.16 / 3.1.17 / 3.1.18 versioning)
 
 ## Compilation Instructions
 - **Build System Detected:** TypeScript via `tsup` (single ESM entry), `tsc --emitDeclarationOnly` for types
@@ -290,6 +290,7 @@ ${LOCALAPPDATA}/Temp/                                 ← C:\Users\marco\AppData
 | M5 — UX polish | DONE | 3.1.17 | #579, #581, #588, recoveryForced surface | S+XS |
 | M2.5 — review findings | DONE | 3.1.17 | v2 validator wiring, stateMaxAgeDays runtime, numeric sort, olderWinsWrite ref | S |
 | M2.5b — architect polish | DONE | 3.1.17 | autoUpdate default false, dispatchToast drain loop, schema accuracy, dead-code reversal, warning-log | S |
+| M2.5c — context-stats & cache-friendliness | DONE | 3.1.18 | per-compress delta headline, stats race + double-flush fix, prune.tools propagation, saveContext change-detection, synthetic summary byte-stability + append idempotency + save coalescing | S |
 | M6 — CI expansion | SKIPPED | — | (not applicable to local-only fork) | M |
 
 ## Open Concerns / Caveats

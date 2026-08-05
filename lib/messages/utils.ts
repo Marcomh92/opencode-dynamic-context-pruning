@@ -19,7 +19,6 @@ export const createSyntheticUserMessage = (
     stableSeed?: string,
 ): WithParts => {
     const userInfo = baseMessage.info as UserMessage
-    const now = Date.now()
     const deterministicSeed = stableSeed?.trim() || userInfo.id
     const messageId = generateStableId("msg_dcp_summary", deterministicSeed)
     const partId = generateStableId("prt_dcp_summary", deterministicSeed)
@@ -31,7 +30,22 @@ export const createSyntheticUserMessage = (
             role: "user" as const,
             agent: userInfo.agent,
             model: userInfo.model,
-            time: { created: now },
+            // M2.5c Fix 5 — synthetic summary byte-stability. The seed already
+            // yields stable messageId + partId + content; the only field that
+            // varied per turn was time.created (Date.now()), which busted the
+            // provider's prompt cache on every transform-hook fire even when
+            // the summary text was identical. Ponytail: 0 is a safe sentinel
+            // — the synthetic message is positioned by its anchorMessageId,
+            // not by time. Caveat from review: after a real compaction
+            // (`state.lastCompaction > 0`), `isMessageCompacted` (state/utils.ts)
+            // returns true for this synthetic message because
+            // `time.created < lastCompaction`. Today this is harmless because
+            // the synthetic carries no tool parts (the prune-* loops skip
+            // compacted messages at the top) — but a future "skip already-
+            // counted" optimizer that reads `time.created` for user messages
+            // would silently include this summary. If that lands, switch to
+            // `state.lastCompaction + 1` so the synthetic is treated as new.
+            time: { created: 0 },
         },
         parts: [
             {
@@ -96,7 +110,14 @@ export const appendToTextPart = (part: TextPart, injection: string): boolean => 
     if (!normalizedInjection.trim()) {
         return false
     }
-    if (part.text.includes(normalizedInjection)) {
+    // M2.5c Fix 5 — exact-tail idempotency. The previous substring match
+    // (`part.text.includes(...)`) could give false positives if the same
+    // tag appeared elsewhere in the message; on a transform-hook fire that
+    // sees the message for the second time it would early-return without
+    // mutating, but the call still bust the provider's prompt cache by
+    // triggering a parent-object identity change. endsWith is both cheaper
+    // and exact: only the most-recent appended tag suppresses a re-append.
+    if (part.text.endsWith(normalizedInjection)) {
         return true
     }
 
@@ -119,7 +140,8 @@ export const appendToToolPart = (part: ToolPart, tag: string): boolean => {
     if (part.state?.status !== "completed" || typeof part.state.output !== "string") {
         return false
     }
-    if (part.state.output.includes(tag)) {
+    // M2.5c Fix 5 — exact-tail idempotency. See appendToTextPart above.
+    if (part.state.output.endsWith(tag)) {
         return true
     }
 

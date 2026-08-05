@@ -321,9 +321,14 @@ export async function sendCompressNotification(
               "(unknown topic)")
             : "(unknown topic)")
 
+    // Headline shows the per-compress delta (sum of compressedTokens across
+    // entries being notified). The previously-reported "totalGross" was the
+    // session-lifetime cumulative counter, which made a single compress that
+    // shaved 25K look like a -400K removal. Session total is shown on its
+    // own line, explicitly labeled. (M2.5c Fix 1)
     const totalActiveSummaryTkns = getActiveSummaryTokenUsage(state)
-    const totalGross = state.stats.totalPruneTokens + state.stats.pruneTokenCounter
-    const notificationHeader = `▣ DCP | ${formatCompressionMetrics(totalGross, totalActiveSummaryTkns)}`
+    const sessionTotalGross = state.stats.totalPruneTokens + state.stats.pruneTokenCounter
+    const notificationHeader = `▣ DCP | ${formatCompressionMetrics(compressedTokens, totalActiveSummaryTkns)}`
 
     if (config.pruneNotification === "minimal") {
         message = `${notificationHeader} — ${compressionLabel}`
@@ -351,6 +356,7 @@ export async function sendCompressNotification(
         } else {
             message += ` compressed`
         }
+        message += `\n→ Session total: ${formatTokenCount(sessionTotalGross, true)} removed`
         if (config.compress.showCompression) {
             message += `\n→ Compression (~${summaryTokensStr}): ${summary}`
         }

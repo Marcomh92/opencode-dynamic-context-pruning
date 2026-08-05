@@ -328,6 +328,25 @@ export function getActiveSummaryTokenUsage(state: SessionState): number {
     return total
 }
 
+// M2.5c Fix 2 — centralised counter flush. The `pruneTokenCounter += x;
+// totalPruneTokens += pruneTokenCounter; pruneTokenCounter = 0` idiom was
+// duplicated at lib/compress/state.ts:258-260 and lib/commands/sweep.ts:229-231
+// and could double-count any pre-flushed counter value when two writers raced.
+// Ponytail: a single helper that adds the in-memory counter to the lifetime
+// total and zeroes the counter. Callers add to counter first, then call this.
+// Returns the value that was flushed (for tests / logs).
+export function flushPruneStats(stats: {
+    pruneTokenCounter: number
+    totalPruneTokens: number
+}): number {
+    const flushed = stats.pruneTokenCounter
+    if (flushed > 0) {
+        stats.totalPruneTokens += flushed
+        stats.pruneTokenCounter = 0
+    }
+    return flushed
+}
+
 export function resetOnCompaction(state: SessionState): void {
     state.toolParameters.clear()
     state.prune.tools = new Map<string, number>()

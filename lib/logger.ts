@@ -2,10 +2,18 @@ import { writeFile, mkdir } from "fs/promises"
 import { join } from "path"
 import { existsSync } from "fs"
 import { homedir } from "os"
+import { createHash } from "node:crypto"
 
 export class Logger {
     private logDir: string
     public enabled: boolean
+    // M2.5c Fix 4 — saveContext change-detection cache. Hashes the minimized
+    // payload per session so a transform-hook fire with no real change skips
+    // the disk write entirely. Module-level Map is shared across Logger
+    // instances inside one process — the fork constructs one Logger per
+    // session, so the key is sessionId. ponytail: unbounded by design; each
+    // entry is ~64 bytes of hash + a string key. Cap only if observed.
+    private static lastMinimizedHashBySession = new Map<string, string>()
 
     constructor(enabled: boolean) {
         this.enabled = enabled
@@ -210,17 +218,43 @@ export class Logger {
         if (!this.enabled) return
 
         try {
+            const minimized = this.minimizeForDebug(messages).filter(
+                (msg) => msg.parts && msg.parts.length > 0,
+            )
+
+            // M2.5c Fix 4 — change-detection. Hash the minimized payload and
+            // skip the disk write when nothing changed since the last fire
+            // for this session. The fork transforms can fire many times per
+            // second when nudges / message-ids mutate every pass; without
+            // this gate, a debug session writes a multi-MB JSON per fire.
+            // ponytail: stringify once and reuse — the hash uses the compact
+            // form (no indentation) and the write uses pretty-print; they
+            // share the same canonical field order from minimizeForDebug so
+            // both produce the same hash input.
+            const payload = JSON.stringify(minimized)
+            const hash = createHash("sha256").update(payload).digest("hex")
+            const previousHash = Logger.lastMinimizedHashBySession.get(sessionId)
+            if (hash === previousHash) {
+                return
+            }
+            Logger.lastMinimizedHashBySession.set(sessionId, hash)
+
             const contextDir = join(this.logDir, "context", sessionId)
             if (!existsSync(contextDir)) {
                 await mkdir(contextDir, { recursive: true })
             }
-
-            const minimized = this.minimizeForDebug(messages).filter(
-                (msg) => msg.parts && msg.parts.length > 0,
-            )
             const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
             const contextFile = join(contextDir, `${timestamp}.json`)
-            await writeFile(contextFile, JSON.stringify(minimized, null, 2))
+            await writeFile(contextFile, `${payload}\n`)
         } catch (error) {}
+    }
+
+    /** Test-only — clear the change-detection hash cache between tests.
+     *  ponytail: this exists because module-level Map state survives across
+     *  tests within one process; tests need a deterministic reset rather
+     *  than relying on `Date.now()`-suffixed sessionIds. Add when tests
+     *  cannot derive fresh sessionIds per case. */
+    static clearSaveContextCache(): void {
+        Logger.lastMinimizedHashBySession.clear()
     }
 }
