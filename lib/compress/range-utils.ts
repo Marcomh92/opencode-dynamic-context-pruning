@@ -27,7 +27,9 @@ export function listValidBoundaryIds(state: SessionState): string[] {
             ids.add(formatBlockRef(blockId))
         }
     }
-    return [...ids].sort()
+    // Numeric-aware sort: `m0001` < `m0010` < `m0100`, `b1` < `b2` < `b10`.
+    // ponytail: default sort is lexicographic and would yield `b1, b10, b2`.
+    return [...ids].sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
 }
 
 /** Check whether a single boundary ID resolves against the visible message set.

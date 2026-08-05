@@ -14,7 +14,10 @@ import {
     parseBlockPlaceholders,
     resolveRanges,
     validateArgs,
+    validateBoundaryIds,
+    validateMonotonicEnd,
     validateNonOverlapping,
+    validateRangeSanity,
     validateSummaryPlaceholders,
 } from "./range-utils"
 import {
@@ -75,6 +78,31 @@ export function createCompressRangeTool(ctx: ToolContext): ReturnType<typeof too
             )
             const resolvedPlans = resolveRanges(input, searchContext, ctx.state)
             validateNonOverlapping(resolvedPlans, ctx.state)
+
+            // v2 protocol invariants (PLAN §6.1). Per-plan sanity, boundary
+            // existence, and strict monotonicity against the most recent
+            // active block's endId. validateMonotonicEnd is skipped on the
+            // first compress (no previous anchor) — without an active block
+            // there's nothing to be strictly greater than.
+            const mostRecentActiveBlockId = [...ctx.state.prune.messages.activeBlockIds].sort(
+                (left, right) => Number(right) - Number(left),
+            )[0]
+            const prevAnchorEnd =
+                (mostRecentActiveBlockId !== undefined
+                    ? ctx.state.prune.messages.blocksById.get(mostRecentActiveBlockId)?.endId
+                    : undefined) ?? ""
+            for (const plan of resolvedPlans) {
+                validateRangeSanity(plan.entry.startId, plan.entry.endId)
+                validateBoundaryIds(plan.entry.startId, plan.entry.endId, ctx.state)
+                if (prevAnchorEnd !== "") {
+                    validateMonotonicEnd(
+                        prevAnchorEnd,
+                        plan.entry.startId,
+                        plan.entry.endId,
+                        ctx.state,
+                    )
+                }
+            }
 
             const notifications: NotificationEntry[] = []
             const preparedPlans: Array<{

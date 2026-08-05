@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { mkdirSync } from "node:fs"
 import { buildSearchContext } from "../lib/compress/search"
 import { appendProtectedTools } from "../lib/compress/protected-content"
-import { buildSubAgentCacheKey } from "../lib/subagents/cache-key"
+import { buildSubAgentCacheKey, olderWinsWrite } from "../lib/subagents/cache-key"
 import type { SearchContext, SelectionResolution } from "../lib/compress/types"
 import { Logger } from "../lib/logger"
 import { createSessionState, type CachedSubAgentResult, type SessionState, type WithParts } from "../lib/state"
@@ -380,4 +380,71 @@ test("#595 composite key: distinct subAgentSessionId prevents collision on share
         /part-state-output/,
         "fallback to state.output when no entry exists for this (subAgentSessionId, callID)",
     )
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// olderWinsWrite helper — reference implementation for the future
+// write-on-completion path (see lib/subagents/cache-key.ts). No production
+// caller exists yet; these tests lock the contract so a future write site
+// can't silently change the rule.
+// ────────────────────────────────────────────────────────────────────────────
+
+function makeCachedResult(
+    subAgentSessionId: string,
+    toolCallId: string,
+    capturedAt: number,
+    text: string,
+): CachedSubAgentResult {
+    return { subAgentSessionId, toolCallId, capturedAt, text }
+}
+
+test("olderWinsWrite: returns incoming when existing is undefined", () => {
+    const incoming = makeCachedResult("ses-sub", "call-1", 100, "incoming text")
+
+    const result = olderWinsWrite(undefined, incoming)
+
+    assert.equal(result, incoming)
+})
+
+test("olderWinsWrite: returns incoming when incoming.capturedAt is strictly older", () => {
+    const existing = makeCachedResult("ses-sub", "call-1", 200, "newer existing text")
+    const incoming = makeCachedResult("ses-sub", "call-1", 100, "older incoming text")
+
+    const result = olderWinsWrite(existing, incoming)
+
+    assert.equal(result, incoming)
+    assert.equal(result.capturedAt, 100)
+})
+
+test("olderWinsWrite: returns existing when incoming.capturedAt is strictly newer", () => {
+    const existing = makeCachedResult("ses-sub", "call-1", 100, "older existing text")
+    const incoming = makeCachedResult("ses-sub", "call-1", 200, "newer incoming text")
+
+    const result = olderWinsWrite(existing, incoming)
+
+    assert.equal(result, existing)
+    assert.equal(result.capturedAt, 100)
+})
+
+test("olderWinsWrite: returns existing when capturedAt is equal (tie keeps existing)", () => {
+    const existing = makeCachedResult("ses-sub", "call-1", 100, "existing text")
+    const incoming = makeCachedResult("ses-sub", "call-1", 100, "incoming text")
+
+    const result = olderWinsWrite(existing, incoming)
+
+    assert.equal(result, existing)
+    assert.equal(result.capturedAt, 100)
+    assert.equal(result.text, "existing text")
+})
+
+test("olderWinsWrite: returns existing when incoming.capturedAt is NaN (invalid)", () => {
+    const existing = makeCachedResult("ses-sub", "call-1", 100, "existing text")
+    const incoming = makeCachedResult("ses-sub", "call-1", Number.NaN, "garbage incoming")
+
+    const result = olderWinsWrite(existing, incoming)
+
+    // NaN < x is always false, so the comparison falls through to existing.
+    assert.equal(result, existing)
+    assert.equal(result.capturedAt, 100)
+    assert.equal(result.text, "existing text")
 })

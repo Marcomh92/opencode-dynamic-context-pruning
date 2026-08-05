@@ -21,6 +21,7 @@ export const checkSession = async (
     logger: Logger,
     messages: WithParts[],
     manualModeDefault: boolean,
+    stateMaxAgeDays: number | null = null,
 ): Promise<void> => {
     const lastUserMessage = getLastUserMessage(messages)
     if (!lastUserMessage) {
@@ -39,6 +40,7 @@ export const checkSession = async (
                 logger,
                 messages,
                 manualModeDefault,
+                stateMaxAgeDays,
             )
         } catch (err: any) {
             logger.error("Failed to initialize session state", { error: err.message })
@@ -153,6 +155,7 @@ export async function ensureSessionInitialized(
     logger: Logger,
     messages: WithParts[],
     manualModeEnabled: boolean,
+    stateMaxAgeDays: number | null = null,
 ): Promise<void> {
     if (state.sessionId === sessionId) {
         return
@@ -174,7 +177,7 @@ export async function ensureSessionInitialized(
     state.currentTurn = countTurns(state, messages)
     state.nudges.turnNudgeAnchors = collectTurnNudgeAnchors(messages)
 
-    const persisted = await loadSessionState(sessionId, logger)
+    const persisted = await loadSessionState(sessionId, logger, stateMaxAgeDays)
     if (persisted === null) {
         return
     }

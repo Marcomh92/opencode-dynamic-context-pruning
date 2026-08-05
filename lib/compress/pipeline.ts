@@ -4,7 +4,7 @@ import { saveSessionState } from "../state/persistence"
 import { assignMessageRefs } from "../message-ids"
 import { isIgnoredUserMessage } from "../messages/query"
 import { deduplicate, purgeErrors } from "../strategies"
-import { getCurrentParams, getCurrentTokenUsage } from "../token-utils"
+import { getCurrentParams } from "../token-utils"
 import { sendCompressNotification } from "../ui/notification"
 import type { ToolContext } from "./types"
 import { buildSearchContext, fetchSessionMessages } from "./search"
@@ -58,6 +58,9 @@ export async function prepareSession(
     // was invoked and the model still owes a compress call; allow through.
     // The compress is blocked whenever the v2 effective manual flag is set
     // and the session is not in "compress-pending".
+    // Two conditions: `manual === "active"` is the v2 net block;
+    // `manualMode !== "compress-pending"` is the per-compress bypass for
+    // `/dcp-compress`.
     const manual = effectiveManualMode(ctx.state)
     if (manual === "active" && ctx.state.manualMode !== "compress-pending") {
         throw new Error(
@@ -83,6 +86,7 @@ export async function prepareSession(
         ctx.logger,
         rawMessages,
         ctx.config.manualMode.enabled,
+        ctx.config.compress.stateMaxAgeDays,
     )
 
     assignMessageRefs(ctx.state, rawMessages)
@@ -190,7 +194,7 @@ export async function finalizeSession(
 
     // Keep the legacy `manualMode` cache in sync with the new flags for code
     // paths M2 doesn't touch (TUI, /dcp help, strategy gates).
-    ctx.state.manualMode = ctx.state.userForced || ctx.state.recoveryForced ? "active" : false
+    ctx.state.manualMode = effectiveManualMode(ctx.state)
 
     applyPendingCompressionDurations(ctx.state)
     await saveSessionState(ctx.state, ctx.logger)
@@ -212,7 +216,3 @@ export async function finalizeSession(
         params,
     )
 }
-
-// Suppress unused-import warnings for tokens intentionally referenced for
-// type/IDE only (kept for downstream code that may import from this module).
-void getCurrentTokenUsage

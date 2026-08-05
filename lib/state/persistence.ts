@@ -149,6 +149,7 @@ export async function saveSessionState(
 export async function loadSessionState(
     sessionId: string,
     logger: Logger,
+    maxAgeDays: number | null = null,
 ): Promise<PersistedSessionState | null> {
     try {
         const filePath = getSessionFilePath(sessionId)
@@ -240,6 +241,27 @@ export async function loadSessionState(
             return null
         }
 
+        // Optional wall-clock expiry gate (PLAN §6.3). null disables; the
+        // age comparison is skipped on a missing or unparsable lastUpdated so
+        // a malformed timestamp never silently invalidates a fresh session.
+        if (
+            maxAgeDays !== null &&
+            maxAgeDays >= 0 &&
+            typeof state.lastUpdated === "string"
+        ) {
+            const parsed = Date.parse(state.lastUpdated)
+            if (Number.isFinite(parsed)) {
+                const ageDays = (Date.now() - parsed) / (1000 * 60 * 60 * 24)
+                if (ageDays > maxAgeDays) {
+                    logger.warn(
+                        `Dropping persisted session state: age ${ageDays.toFixed(1)}d exceeds stateMaxAgeDays ${maxAgeDays}`,
+                        { sessionId: sessionId, ageDays, maxAgeDays },
+                    )
+                    return null
+                }
+            }
+        }
+
         logger.info("Loaded session state from disk", {
             sessionId: sessionId,
         })
@@ -289,7 +311,8 @@ export async function loadManualModeSetting(
     sessionId: string,
     logger: Logger,
 ): Promise<boolean | undefined> {
-    const state = await loadSessionState(sessionId, logger)
+    // manualMode is a derived flag — age doesn't apply. Skip the wall-clock gate.
+    const state = await loadSessionState(sessionId, logger, null)
     return typeof state?.manualMode === "boolean" ? state.manualMode : undefined
 }
 
@@ -298,7 +321,8 @@ export async function saveManualModeSetting(
     manualMode: boolean,
     logger: Logger,
 ): Promise<void> {
-    const existing = await loadSessionState(sessionId, logger)
+    // Same: age doesn't apply to a write-only path; null disables the gate.
+    const existing = await loadSessionState(sessionId, logger, null)
     const state = existing ?? emptyPersistedState(manualMode)
     state.manualMode = manualMode
     state.lastUpdated = new Date().toISOString()

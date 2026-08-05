@@ -69,7 +69,11 @@ const TOAST_SUMMARY_MAX_CHARS = 600
 let inFlightDispatch: Promise<void> | null = null
 let pendingMergedMessages: string[] = []
 
-/** Resolves the configured notification type for the current host runtime. */
+/** Resolves the configured notification type for the current host runtime.
+ *  Forces `"toast"` on the OpenCode Desktop sidecar regardless of user config,
+ *  because the desktop runtime has no chat-message channel for ignored text.
+ *  The `pruneNotification` content setting (off / minimal / detailed) is
+ *  unaffected — only the transport type flips. */
 export function resolveEffectiveNotificationType(
     configPruneNotificationType: "chat" | "toast",
     isDesktop: boolean,

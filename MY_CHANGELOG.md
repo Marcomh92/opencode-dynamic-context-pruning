@@ -10,6 +10,28 @@ Each entry must include:
 
 ---
 
+## 2026-08-05 - M2.5 Complete: Review Findings (v3.1.17)
+- **Branch:** `fork/dcp-3.1.15-m1`
+- **Changes:**
+  - **CRITICAL #1 v2 validators wired into production:** After `validateNonOverlapping` in `lib/compress/range.ts` and after `resolveMessages` in `lib/compress/message.ts`, the new helpers `validateRangeSanity`, `validateBoundaryIds`, and `validateMonotonicEnd` are now called per plan entry. `prevAnchorEnd` for `validateMonotonicEnd` is derived from the most recent active block's `endId` in **both** modes — the cross-tool anchor is the active-block chain, not the assigned-ref set. (Message-mode initial cut derived from `state.messageIds.byRef` and was reverted because `assignMessageRefs` (in `prepareSession`) populates `byRef` with every visible message ref, which would always be `>=` any message being compressed and would have rejected every message-mode compress call. Active-block chain is the right anchor; this is documented as a `ponytail:` comment at `lib/compress/message.ts:77-86`.) `validateMonotonicEnd` is gated behind `prevAnchorEnd !== ""` so the first compress in a session (no prior anchor) still works.
+  - **CRITICAL #2 `stateMaxAgeDays` runtime check:** `loadSessionState` now accepts `maxAgeDays: number | null` (optional, default `null` — age gate disabled). After the existing `forkSchemaVersion` drop gate, the loader parses `state.lastUpdated` and drops + logs if the age exceeds the configured cap. Production callers (`lib/compress/pipeline.ts prepareSession`, `lib/hooks.ts` both call sites of `ensureSessionInitialized`/`checkSession`, `lib/tui/data.ts buildSessionState`) pass `config.compress.stateMaxAgeDays` through; the internal `loadManualModeSetting` / `saveManualModeSetting` helpers pass `null` (the manual-mode flag is age-insensitive).
+  - **MAJOR #3 numeric-aware sort:** `lib/compress/range-utils.ts listValidBoundaryIds` now uses `localeCompare(undefined, { numeric: true })` so `b1 < b2 < b10` and `m0001 < m0010 < m0100` instead of lexicographic `b1, b10, b2`.
+  - **MAJOR #4 `olderWinsWrite` restored as reference helper:** Re-added `olderWinsWrite(existing, incoming)` to `lib/subagents/cache-key.ts` returning the entry with the strictly-earlier `capturedAt`. No production callers; documented as the rule for the future write-on-completion path (already covered by `tests/subagent-cache.test.ts` per the type docstring).
+  - **MINOR #5 cleanup batch:**
+    - `lib/compress/pipeline.ts:7`: dropped unused `getCurrentTokenUsage` import and the trailing `void getCurrentTokenUsage` line.
+    - `lib/compress/pipeline.ts:193`: replaced the inline `userForced || recoveryForced ? "active" : false` with `effectiveManualMode(ctx.state)` (same expression in the canonical helper).
+    - `lib/compress/pipeline.ts:61-66`: added a focused comment distinguishing the v2 net block (`manual === "active"`) from the per-compress bypass (`manualMode !== "compress-pending"`).
+    - `lib/ui/notification.ts:72-79`: expanded the `resolveEffectiveNotificationType` JSDoc to spell out that only the transport type flips — `pruneNotification` content is unaffected.
+    - `MY_CHANGELOG.md` M4 entry: reordered the cache-shape bullet to present the final composite-key + documented-rule state, and pinned the `fetchSubAgentMessages` removal to `lib/messages/inject/subagent-results.ts`.
+  - Version unchanged at 3.1.17 (no bump — review-followup milestone only).
+- **Reason:** M2.5 closes the reviewer findings from `03-reviewer` so the validator scaffolding added in M2 actually fires in the production compress flow and the new config keys do real work.
+- **Follow-up — test additions (after `test_creator` round):** 18 new end-to-end tests verifying the validator wiring, the `stateMaxAgeDays` runtime gate, and the restored `olderWinsWrite` reference helper. All 147 pre-existing tests still pass; total now 165.
+  - `tests/validator-wiring.test.ts` (8 new) — drives `createCompressRangeTool` and `createCompressMessageTool` end-to-end with crafted state; covers monotonicity, boundary existence, and per-plan sanity through the production flow.
+  - `tests/state-max-age.test.ts` (5 new) — `loadSessionState(..., maxAgeDays?)` age gate (within threshold / past / boundary / null-disabled / missing `lastUpdated`).
+  - `tests/subagent-cache.test.ts` (5 appended) — `olderWinsWrite` reference helper contract (empty / older / newer / tie / NaN).
+  - One deviation: `__DCP_RANGE_SANITY__` is unreachable through the tool because `resolveBoundaryIds` rejects inverted ranges first; test asserts the upstream rejection message instead. Documented inline in the test.
+- **Files:** `lib/compress/range-utils.ts`, `lib/compress/range.ts`, `lib/compress/message.ts`, `lib/compress/pipeline.ts`, `lib/state/persistence.ts`, `lib/state/state.ts`, `lib/hooks.ts`, `lib/tui/data.ts`, `lib/subagents/cache-key.ts`, `lib/ui/notification.ts`, `MY_CHANGELOG.md`, `tests/validator-wiring.test.ts` (new), `tests/state-max-age.test.ts` (new), `tests/subagent-cache.test.ts` (extended)
+
 ## 2026-08-05 - M5 Complete: UX Polish (v3.1.17)
 - **Branch:** `fork/dcp-3.1.15-m1`
 - **Changes:**
@@ -25,13 +47,13 @@ Each entry must include:
 ## 2026-08-05 - M4 Complete: Subagent Cache Correctness (v3.1.16)
 - **Branch:** `fork/dcp-3.1.15-m1`
 - **Changes:**
-  - **#595 subagent cache poisoning:** Added `CachedSubAgentResult` interface and changed `SessionState.subAgentResultCache` to `Map<string, CachedSubAgentResult>`. Cache key is now composite `${subAgentSessionId}::${callID}`. New helpers `buildSubAgentCacheKey` and `olderWinsWrite` in `lib/subagents/cache-key.ts`.
+  - **#595 subagent cache poisoning:** `SessionState.subAgentResultCache` is now `Map<string, CachedSubAgentResult>` keyed by composite `${subAgentSessionId}::${callID}` (defensive against future callID reuse). New helpers `buildSubAgentCacheKey` (composite key only) and `olderWinsWrite` in `lib/subagents/cache-key.ts`; the older-wins write semantic (capturedAt strictly-less-than) is documented in the `CachedSubAgentResult.capturedAt` docstring so future maintainers adding a write-on-completion path see the rule.
   - **Load-bearing fallback:** On cache MISS, both `injectExtendedSubAgentResults` and `appendProtectedTools` (in `lib/compress/protected-content.ts`) now use the part's own `state.output` as-is — they no longer fetch the current subagent session state, which was the bug source.
   - **forkSchemaVersion bump 2 → 3** because the cache shape changed. Old sessions are dropped cleanly on load.
-  - Removed dead `fetchSubAgentMessages` helper (no longer needed after the fetch-on-miss path was deleted).
+  - Removed dead `fetchSubAgentMessages` helper from `lib/messages/inject/subagent-results.ts` (no longer needed after the fetch-on-miss path was deleted).
   - Version bumped 3.1.15 → 3.1.16.
   - New test file: `tests/subagent-cache.test.ts` (4 cases: cold-cache fallback in inject, cold-cache fallback in protected-content, cache HIT, composite-key collision isolation). Cold-cache test is the load-bearing test per architect review.
-- **Reason:** M4 fixes the nested-task() result-overwrite bug where 3-round subagent chains showed all ancestor `<task_result>`s as the deepest round's text. The fallback to `state.output` is the load-bearing correctness change; the cache is a defensive scaffolding (composite key + `CachedSubAgentResult` value type) for a future safe write-on-completion path. The legacy `olderWinsWrite` helper was removed after review found it had no production call site.
+- **Reason:** M4 fixes the nested-task() result-overwrite bug where 3-round subagent chains showed all ancestor `<task_result>`s as the deepest round's text. The fallback to `state.output` is the load-bearing correctness change; the cache is a defensive scaffolding (composite key + `CachedSubAgentResult` value type) for a future safe write-on-completion path.
 - **Files:** `lib/state/types.ts`, `lib/state/state.ts`, `lib/messages/inject/subagent-results.ts`, `lib/compress/protected-content.ts`, `lib/config.ts`, `dcp.schema.json`, `lib/subagents/cache-key.ts` (new), `package.json`, `tests/subagent-cache.test.ts` (new)
 
 ## 2026-08-05 - M2 Complete: Compress Safety + v2 Protocol (v3.1.15 → 3.1.16 prep)

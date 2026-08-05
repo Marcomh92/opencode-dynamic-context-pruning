@@ -123,7 +123,14 @@ export function createChatMessageTransformHandler(
             })
         }
 
-        await checkSession(client, state, logger, output.messages, config.manualMode.enabled)
+        await checkSession(
+            client,
+            state,
+            logger,
+            output.messages,
+            config.manualMode.enabled,
+            config.compress.stateMaxAgeDays,
+        )
 
         syncCompressPermissionState(state, config, hostPermissions, output.messages)
 
@@ -194,6 +201,7 @@ export function createCommandExecuteHandler(
                 logger,
                 messages,
                 config.manualMode.enabled,
+                config.compress.stateMaxAgeDays,
             )
 
             syncCompressPermissionState(state, config, hostPermissions, messages)

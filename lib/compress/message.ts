@@ -11,6 +11,11 @@ import {
     applyCompressionState,
     wrapCompressedSummary,
 } from "./state"
+import {
+    validateBoundaryIds,
+    validateMonotonicEnd,
+    validateRangeSanity,
+} from "./range-utils"
 import type { CompressMessageToolArgs } from "./types"
 
 function buildSchema() {
@@ -67,6 +72,36 @@ export function createCompressMessageTool(ctx: ToolContext): ReturnType<typeof t
 
             if (plans.length === 0 && skippedCount > 0) {
                 throw new Error(formatIssues(skippedIssues, skippedCount))
+            }
+
+            // v2 protocol invariants (PLAN §6.1), mirror of range.ts. Per-plan
+            // sanity + boundary existence + strict monotonicity against the
+            // most recent active block's endId. validateMonotonicEnd is
+            // skipped on the first compress (no previous anchor) — without
+            // an active block there's nothing to be strictly greater than.
+            // ponytail: message-mode does NOT derive prevAnchorEnd from
+            // state.messageIds.byRef because assignMessageRefs (in
+            // prepareSession) populates byRef with every visible message
+            // ref, which would always be >= any message being compressed.
+            // Active blocks are the right cross-tool anchor.
+            const mostRecentActiveBlockId = [...ctx.state.prune.messages.activeBlockIds].sort(
+                (left, right) => Number(right) - Number(left),
+            )[0]
+            const prevAnchorEnd =
+                (mostRecentActiveBlockId !== undefined
+                    ? ctx.state.prune.messages.blocksById.get(mostRecentActiveBlockId)?.endId
+                    : undefined) ?? ""
+            for (const plan of plans) {
+                validateRangeSanity(plan.entry.messageId, plan.entry.messageId)
+                validateBoundaryIds(plan.entry.messageId, plan.entry.messageId, ctx.state)
+                if (prevAnchorEnd !== "") {
+                    validateMonotonicEnd(
+                        prevAnchorEnd,
+                        plan.entry.messageId,
+                        plan.entry.messageId,
+                        ctx.state,
+                    )
+                }
             }
 
             const notifications: NotificationEntry[] = []

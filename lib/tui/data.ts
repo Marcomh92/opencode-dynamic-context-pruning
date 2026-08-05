@@ -44,7 +44,7 @@ export async function buildSessionState(
     state.userForced = config.manualMode.enabled
     state.lastCompaction = findLastCompactionTimestamp(messages)
 
-    const persisted = await loadSessionState(sessionID, logger)
+    const persisted = await loadSessionState(sessionID, logger, config.compress.stateMaxAgeDays)
     if (persisted) {
         if (typeof persisted.manualMode === "boolean") {
             state.manualMode = persisted.manualMode ? "active" : false
