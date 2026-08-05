@@ -66,6 +66,8 @@ const TOAST_SUMMARY_MAX_CHARS = 600
 //   - single call → one immediate toast
 //   - burst of N synchronous calls → one immediate toast + one merged follow-up
 //   - sequential awaited calls → one toast per call (inFlight clears between awaits)
+// Shared across sessions; coalescing is per-process. Cross-session toast coalescing across two concurrent
+// sessions would merge unrelated messages — cosmetic, not corruption.
 let inFlightDispatch: Promise<void> | null = null
 let pendingMergedMessages: string[] = []
 
@@ -97,17 +99,24 @@ export function dispatchToast(client: any, title: string, message: string): void
             await client.tui.showToast({
                 body: { title, message, variant: "info", duration: 5000 },
             })
-            if (pendingMergedMessages.length > 0) {
+            // Drain loop: re-check after each merged follow-up so messages
+            // arriving mid-await are not silently dropped.
+            // ponytail: unbounded; each iteration is an IPC roundtrip. Cap only if observed.
+            while (pendingMergedMessages.length > 0) {
                 const merged = pendingMergedMessages.join("\n")
                 pendingMergedMessages = []
                 await client.tui.showToast({
                     body: { title, message: merged, variant: "info", duration: 5000 },
                 })
             }
+        } catch {
+            // Swallow rejections silently; the fork can't recover from a host-side toast failure.
+            // ponytail: extension to fire-and-forget — no logger in scope here.
         } finally {
             inFlightDispatch = null
-            // ponytail: defensive — if the first showToast rejected, the queued
-            // merged messages would otherwise persist into the next burst.
+            // Defensive: clear the queue unconditionally so the next burst
+            // starts from a clean state (mid-await arrivals during a rejected
+            // toast are dropped — acceptable trade-off vs. an unbounded leak).
             pendingMergedMessages = []
         }
     })()

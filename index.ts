@@ -87,11 +87,22 @@ const server: Plugin = (async (ctx) => {
             }),
         },
         config: async (opencodeConfig) => {
+            // ponytail: capture before the host-permission override so the warn
+            // log only fires on the transition from non-deny → deny (a pre-existing
+            // "deny" in user config is the user's choice, not an injection).
+            const previousPermission = config.compress.permission
             if (
                 config.compress.permission !== "deny" &&
                 compressDisabledByOpencode(opencodeConfig.permission)
             ) {
                 config.compress.permission = "deny"
+            }
+
+            if (config.compress.permission === "deny" && config.compress.permission !== previousPermission) {
+                logger.warn(
+                    "DCP: compress disabled by host permission baseline (e.g. *:deny). Set explicit \"compress\": \"allow\" in opencode.json permission block to enable.",
+                    { resolvedPermission: config.compress.permission },
+                )
             }
 
             if (config.commands.enabled && config.compress.permission !== "deny") {

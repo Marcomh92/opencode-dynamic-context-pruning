@@ -10,6 +10,20 @@ Each entry must include:
 
 ---
 
+## 2026-08-05 - M2.5b Complete: Architect-Approved Polish (v3.1.17)
+- **Branch:** `fork/dcp-3.1.15-m1`
+- **Changes:**
+  - **MAJOR #1 plan §10 honesty restored:** `lib/config.ts:766` — `defaultConfig.autoUpdate` flipped from `true` to `false`. The M1 `DCP_LOCAL_FORK=1` env-var guard was never triggered (no code sets it), so every OpenCode restart was firing an HTTPS GET to `registry.npmjs.org/@tarquinen/opencode-dcp/latest`. The fork has no upstream registry to update from (it's a `file://` install), so the default is now honest.
+  - **MAJOR #2 dispatchToast drain loop:** `lib/ui/notification.ts` — rewrote the IIFE to drain `pendingMergedMessages` across multiple iterations instead of clearing in `finally` after a single merged follow-up. Plus a `.catch` that silently swallows rejected `showToast` calls (no unhandled rejection). Module-level `ponytail:` comment extended to document cross-session scope.
+  - **MAJOR #3 schema description accurate:** `dcp.schema.json` — rewrote `maxCompactionRatio.description` to match the actual silent-counter + auto-disable behavior (the previous text claimed "thrown tool error, model-visible" which the code never did). References plan §6.1 deviation + sibling keys.
+  - **MINOR #4 dead-code reversal (architect correction):** Both `validateRangeSanity` call sites removed (`lib/compress/range.ts:95`, `lib/compress/message.ts:95`) and the function itself deleted from `lib/compress/range-utils.ts`. Architect's investigation showed the call in `range.ts` was an **active landmine** (false positives on lexicographic IDs like `b5..b10`) and the call in `message.ts` was always-dead (`localeCompare(x,x)===0`). `resolveBoundaryIds` already enforces ordering authoritatively via `rawIndex`. The 2 corresponding tests in `tests/compress-protocol.test.ts` removed (they asserted the false-positive behavior). Updated the now-stale comment in `tests/validator-wiring.test.ts`.
+  - **MINOR #6 stats surface complete:** `lib/commands/stats.ts` — extended `formatStatsMessage` signature with `recoveryFadeCounter: number` and `recoveryFadeWindow: number`; new "fade streak: N of M" line in the "Recovery state" section. `handleStatsCommand` now reads `state.recoveryFadeCounter` and passes `config.compress.recoveryFadeWindow`. `StatsCommandContext` extended to include `config`.
+  - **Pre-smoke warning-log added:** `index.ts` — when the host's `*:deny` baseline flips `config.compress.permission` to `"deny"`, log a prominent warning so the user can opt-in via opencode.json. Gated on the transition (not the steady state), so a pre-existing `"deny"` doesn't spam every restart.
+  - **Test additions:** 2 new tests in `tests/desktop-notifications.test.ts` covering the drain-loop async-burst path (with deferred-promise stub per architect's guidance) and the silent `.catch` rejection swallow (with explicit `unhandledRejection` listener for deterministic assertion).
+  - **Version unchanged at 3.1.17** (no bump — review-followup milestone).
+- **Reason:** M2.5b closes the three architect-confirmed MAJOR findings from the second-pass review (per the deep architect's verdict). The fork is now smoke-test-ready: the registered `file://` plugin will load without contacting npm, the toast dispatcher is correct under async interleavings, and the schema description matches the actual behavior.
+- **Files:** `lib/config.ts`, `lib/ui/notification.ts`, `lib/compress/range.ts`, `lib/compress/message.ts`, `lib/compress/range-utils.ts`, `lib/commands/stats.ts`, `index.ts`, `dcp.schema.json`, `tests/compress-protocol.test.ts` (2 tests removed), `tests/validator-wiring.test.ts` (comment updated), `tests/desktop-notifications.test.ts` (2 tests added)
+
 ## 2026-08-05 - M2.5 Complete: Review Findings (v3.1.17)
 - **Branch:** `fork/dcp-3.1.15-m1`
 - **Changes:**

@@ -188,13 +188,10 @@ test("validator-wiring: range tool rejects when startId > endId", async () => {
     const tool = makeRangeTool(state, sessionID, rawMessages)
     const priorSize = state.prune.messages.blocksById.size
 
-    // Spec deviation note: the inverted-range rejection actually fires
-    // upstream — `resolveBoundaryIds` (lib/compress/search.ts:101) checks
-    // `rawIndex` ordering and throws before the tool's validator block ever
-    // sees the entry. The validator block's own `validateRangeSanity` is a
-    // belt-and-braces backstop that can't be reached through the tool when
-    // both IDs resolve. The tool still rejects, just with the upstream
-    // message instead of the `__DCP_RANGE_SANITY__` prefix.
+    // Spec deviation note: the inverted-range rejection fires upstream —
+    // `resolveBoundaryIds` (lib/compress/search.ts:101) checks `rawIndex`
+    // ordering and throws before the tool's validator block ever sees the
+    // entry. The tool still rejects, with the upstream message.
     await assert.rejects(
         tool.execute(
             {

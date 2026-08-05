@@ -252,7 +252,7 @@
                     "default": 0.7,
                     "exclusiveMinimum": 0,
                     "maximum": 1,
-                    "description": "Net-compaction guard. A compress block is refused (thrown tool error, model-visible) when summaryTokens >= removedTokens * maxCompactionRatio. Lower values are stricter. See PLAN §6.1."
+                    "description": "Net-compaction guard. After `maxContextLimitRecovery` consecutive compress calls where summaryTokens >= removedTokens * maxCompactionRatio, autonomous compress is auto-disabled (sets recoveryForced, the `compress` tool becomes unavailable). The model is NOT shown a thrown error — the tool simply disappears after the threshold. Lower values are stricter. Plan §6.1 — fork deviation: silent counter + auto-disable instead of thrown tool error (see MY_CHANGELOG M2.5)."
                 },
                 "maxContextLimitRecovery": {
                     "type": "number",

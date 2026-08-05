@@ -14,7 +14,6 @@ import {
 import {
     validateBoundaryIds,
     validateMonotonicEnd,
-    validateRangeSanity,
 } from "./range-utils"
 import type { CompressMessageToolArgs } from "./types"
 
@@ -92,7 +91,6 @@ export function createCompressMessageTool(ctx: ToolContext): ReturnType<typeof t
                     ? ctx.state.prune.messages.blocksById.get(mostRecentActiveBlockId)?.endId
                     : undefined) ?? ""
             for (const plan of plans) {
-                validateRangeSanity(plan.entry.messageId, plan.entry.messageId)
                 validateBoundaryIds(plan.entry.messageId, plan.entry.messageId, ctx.state)
                 if (prevAnchorEnd !== "") {
                     validateMonotonicEnd(

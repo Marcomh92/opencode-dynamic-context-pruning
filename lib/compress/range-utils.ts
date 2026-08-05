@@ -73,17 +73,6 @@ export function validateBoundaryIds(
     }
 }
 
-/** Validate `startId <= endId` (lexical). Throws otherwise. Equality is allowed
- *  here — the monotonicity guard in validateMonotonicEnd rejects it downstream
- *  when relevant. */
-export function validateRangeSanity(startId: string, endId: string): void {
-    if (startId.localeCompare(endId) > 0) {
-        throw new Error(
-            `__DCP_RANGE_SANITY__: startId ${startId} must come before or equal to endId ${endId}.`,
-        )
-    }
-}
-
 /** Enforce the v2 strictly-greater anchor rule from PLAN §6.1:
  *  newStart > prevAnchorEnd AND newEnd > prevAnchorEnd. Equality also throws
  *  — it means zero new coverage. The error message carries a valid-ID list

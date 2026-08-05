@@ -5,6 +5,7 @@
 
 import type { Logger } from "../logger"
 import type { SessionState, WithParts } from "../state"
+import type { PluginConfig } from "../config"
 import { sendIgnoredMessage } from "../ui/notification"
 import { formatTokenCount } from "../ui/utils"
 import { loadAllSessionStats, type AggregatedStats } from "../state/persistence"
@@ -14,6 +15,7 @@ import { getActiveCompressionTargets } from "./compression-targets"
 export interface StatsCommandContext {
     client: any
     state: SessionState
+    config: PluginConfig
     logger: Logger
     sessionId: string
     messages: WithParts[]
@@ -28,6 +30,8 @@ export function formatStatsMessage(
     allTime: AggregatedStats,
     recoveryForced: boolean,
     nonCompactingRunCount: number,
+    recoveryFadeCounter: number,
+    recoveryFadeWindow: number,
 ): string {
     const lines: string[] = []
 
@@ -51,6 +55,7 @@ export function formatStatsMessage(
         `  recoveryForced:    ${recoveryForced ? "YES — autonomous compress disabled" : "no"}`,
     )
     lines.push(`  non-compacting streak: ${nonCompactingRunCount} consecutive`)
+    lines.push(`  fade streak:        ${recoveryFadeCounter} of ${recoveryFadeWindow}`)
     lines.push("")
     lines.push("All-time:")
     lines.push("─".repeat(60))
@@ -99,7 +104,7 @@ function formatCompressionTime(ms: number): string {
 }
 
 export async function handleStatsCommand(ctx: StatsCommandContext): Promise<void> {
-    const { client, state, logger, sessionId, messages } = ctx
+    const { client, state, config, logger, sessionId, messages } = ctx
 
     const report = await buildStatsReport(state, logger)
     const message = formatStatsMessage(
@@ -111,6 +116,8 @@ export async function handleStatsCommand(ctx: StatsCommandContext): Promise<void
         report.allTime,
         state.recoveryForced === true,
         state.nonCompactingRunCount ?? 0,
+        state.recoveryFadeCounter ?? 0,
+        config.compress.recoveryFadeWindow ?? 5,
     )
 
     const params = getCurrentParams(state, messages, logger)

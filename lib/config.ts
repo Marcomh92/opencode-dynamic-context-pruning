@@ -763,7 +763,7 @@ function showConfigWarnings(
 
 const defaultConfig: PluginConfig = {
     enabled: true,
-    autoUpdate: true,
+    autoUpdate: false,
     debug: false,
     pruneNotification: "detailed",
     pruneNotificationType: "chat",

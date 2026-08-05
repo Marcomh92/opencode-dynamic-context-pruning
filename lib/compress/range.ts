@@ -17,7 +17,6 @@ import {
     validateBoundaryIds,
     validateMonotonicEnd,
     validateNonOverlapping,
-    validateRangeSanity,
     validateSummaryPlaceholders,
 } from "./range-utils"
 import {
@@ -92,7 +91,6 @@ export function createCompressRangeTool(ctx: ToolContext): ReturnType<typeof too
                     ? ctx.state.prune.messages.blocksById.get(mostRecentActiveBlockId)?.endId
                     : undefined) ?? ""
             for (const plan of resolvedPlans) {
-                validateRangeSanity(plan.entry.startId, plan.entry.endId)
                 validateBoundaryIds(plan.entry.startId, plan.entry.endId, ctx.state)
                 if (prevAnchorEnd !== "") {
                     validateMonotonicEnd(

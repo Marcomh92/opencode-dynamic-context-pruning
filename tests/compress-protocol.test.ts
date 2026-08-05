@@ -14,7 +14,6 @@ import {
     listValidBoundaryIds,
     validateBoundaryIds,
     validateMonotonicEnd,
-    validateRangeSanity,
 } from "../lib/compress/range-utils"
 import { Logger } from "../lib/logger"
 import { assignMessageRefs } from "../lib/message-ids"
@@ -387,16 +386,6 @@ test("validateMonotonicEnd error message carries valid-ID list", () => {
         assert.match(message, /m0501/)
         assert.match(message, /m0510/)
     }
-})
-
-// #573 range sanity: startId must come before endId.
-test("validateRangeSanity throws when startId > endId", () => {
-    assert.throws(() => validateRangeSanity("m0510", "m0501"), /__DCP_RANGE_SANITY__/)
-})
-
-test("validateRangeSanity accepts startId <= endId", () => {
-    assert.doesNotThrow(() => validateRangeSanity("m0501", "m0510"))
-    assert.doesNotThrow(() => validateRangeSanity("m0501", "m0501"))
 })
 
 // #573 ID existence.
