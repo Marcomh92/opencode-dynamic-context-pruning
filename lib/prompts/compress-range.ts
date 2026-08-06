@@ -57,4 +57,14 @@ Rules:
 
 BATCHING
 When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`content\` array of a single tool call. Each entry should have its own \`startId\`, \`endId\`, and \`summary\`.
+
+PROJECT CONTEXT PRESERVATION
+
+Knowledge you have gathered yourself about this project — how it works, its architecture, conventions, and config — is expensive to rebuild: subagent summaries are non-reproducible, and re-reading docs costs context twice. When compressing messages containing such knowledge:
+
+- Preserve verbatim: section headers, file paths, function/method signatures, config keys, code identifiers.
+- General background: compress lightly, keep the meaning exact.
+- Sections relevant to the active task: preserve closely.
+- Sections clearly irrelevant to the active task: compress to 1-3 lines naming topic and focus.
+- When unsure whether content is project knowledge, apply normal compression rules.
 `

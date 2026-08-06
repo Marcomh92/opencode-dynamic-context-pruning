@@ -1,5 +1,9 @@
 # Project Context Preservation — Feature Proposal
 
+> **⚠️ SUPERSEDED (2026-08-06):** The user deviated from this elaborate design and shipped a simpler alternative. The full config-key + module + conditional-clause architecture described below was NOT implemented. Instead, a condensed ~95-word preservation instruction was baked directly into both compress prompts (`lib/prompts/compress-message.ts:44-52`, `lib/prompts/compress-range.ts:61-69`). See `MY_CHANGELOG.md` 2026-08-06 entry for details. This document is preserved as the rejected design alternative; the shipped prompt text is in the prompt files.
+
+---
+
 **Status:** Draft. Implementation plan TBD.
 **Target version:** Fork `3.1.18`.
 **Branch:** `fork/dcp-3.1.18-pcp` (when implementation starts).

@@ -1,5 +1,21 @@
 # MY_CHANGELOG.md - Personal Change History
 
+## 2026-08-06 - Project Context Preservation (Prompt-Text Deviation)
+- **Branch:** `fork/dcp-3.1.15-m1`
+- **Triggered by:** User-driven deviation from the elaborate PCP feature design (`MY_PROJECT_CONTEXT_PRESERVATION.md`). Instead of the full config-key + module + conditional-clause design (150 lines), the user chose to bake a condensed preservation instruction directly into both compress prompts.
+- **Changes:**
+  - **`lib/prompts/compress-message.ts`** (line 43+): appended a `PROJECT CONTEXT PRESERVATION` section (~95 words) after `GENERAL CLEANUP`, before the closing backtick. Instructs the agent to apply loss-aware compression to project-context knowledge it has gathered (architecture, conventions, config keys, code identifiers preserved verbatim; tiered rules for general/task-relevant/task-irrelevant content).
+  - **`lib/prompts/compress-range.ts`** (line 60+): identical block appended after `BATCHING`. One block, two files (deliberately duplicated per user constraint).
+  - **No code changes.** No config keys, no schema entries, no master toggle, no skill list. The prompt is now static from plugin registration — the agent sees it in the compress tool's description.
+  - **No version bump** — prompt-text-only change, ~6 KB added to the bundled dist (722.17 → 728.10 KB).
+- **Architect-reviewed** (deep architect follow-up on `ses_02a01ab3effe92ZSyPs7weV8Ui`): APPROVE. Conflict analysis confirmed no conflicts with existing rules (`be LEAN / strip verbose tool output`, `produce minimal one-line summary`, `Optimize for reducing context footprint` all naturally scoped to NOT swallow the new instruction).
+- **Reason:** The full PCP feature solved configurability problems the user didn't actually need (always-on with the two project-context skills was sufficient). The static prompt addition covers the use case with ~30 lines and no config surface.
+- **Caveats documented** in `MY_README.md` "Open Concerns / Caveats": (a) no off-switch except `experimental.customPrompts` overrides, (b) `protectedTools: ["task", …]` overlap risk → mitigation is a manual config edit, (c) compliance is model-dependent — smoke-validate via `/dcp stats` summary sizes.
+- **Files:** `lib/prompts/compress-message.ts`, `lib/prompts/compress-range.ts`, `MY_README.md` (caveat), `MY_PROJECT_CONTEXT_PRESERVATION.md` (SUPERSEDED note)
+- **Test additions:** none (prompt-text-only change, no new code paths).
+- **Verification:** `bun run build` (728.10 KB), `bun run typecheck` (clean), `bun run test` (195/195 pass, +0 new tests).
+
+
 ## Format
 Each entry must include:
 - Date
