@@ -1,7 +1,7 @@
 # Loose Compression Patterns — Feature Proposal
 
 **Status:** Draft. Implementation plan TBD.
-**Target version:** Fork `3.1.18` (Option A) or `3.2.0` (Option B).
+**Target version:** Fork `3.1.18` (Option A only — Option B deferred).
 **Branch:** `fork/dcp-3.1.18-lcp` (when implementation starts).
 
 ---
@@ -12,10 +12,10 @@ A new config key, `compress.looseCompressionPatterns`, that selects markdown fil
 
 Precedence over existing mechanisms:
 
-- If a file path matches **`compress.looseCompressionPatterns`** AND **`protectedFilePatterns`**, the loose pattern wins (loose compression is applied, full-output-append is NOT).
-- If a file path matches **`compress.looseCompressionPatterns`** AND its body contains `<protect>...</protect>` tags AND **`compress.protectTags`** is enabled, the loose pattern still wins (tag regions are summarized along with the rest of the document; no verbatim preservation).
+- If a file path matches **`compress.looseCompressionPatterns`** AND **`protectedFilePatterns`**, the loose pattern wins (loose compression is applied, full-output-append is NOT — enforced via plugin-side suppression in `lib/compress/protected-content.ts`).
+- The behavior of `compress.protectTags` for files NOT matched by the loose pattern is unchanged.
 
-The behavior of `protectedFilePatterns` and `compress.protectTags` for files NOT matched by the loose pattern is unchanged.
+(`protectedFilePatterns` is a **top-level** config key, not under `compress.*`. See `dcp.schema.json:123-130` and `lib/config.ts:74`. The new loose-compression key lives under `compress.*` — this asymmetry is by design, not a bug.)
 
 ## Why
 
@@ -28,24 +28,22 @@ A middle ground is needed: preserve enough structure and task-relevant content t
 
 ## How (high-level)
 
-The feature is structurally identical under both implementation options. The differences are where in the prompt the rules land and how much of the document is pre-processed before the model sees it.
+The feature extends the compress tool's description string with a "Loose Compression" section listing all configured patterns + per-pattern instructions. The agent sees this section when it considers calling the tool and applies the per-pattern rules to file reads it identifies.
 
 > **Model identity.** Summarization is performed by the **current agent model** (kimi in your setup) — not a separate LLM call. The plugin never invokes an LLM itself; the agent sees the summary prompt + the messages to compress, writes the summary as part of its `compress` tool call, and the plugin persists it (see `lib/compress/message.ts:114` — `plan.entry.summary` is agent-written, not plugin-generated). This means the agent has **full session context** when deciding what to preserve: the original PLAN.md it read, prior compressions, your current user goal. No task-context plumbing is required.
 
-### Behavior contract (shared by both options)
+> **Static prompt, config-restart-required.** The compress tool's description is built **once at plugin registration** in `createCompressMessageTool(ctx)` (`lib/compress/message.ts:45-50`) and `createCompressRangeTool(ctx)` (`lib/compress/range.ts:63`), not per-compress-call. Loose-compression instructions are baked into the description at startup. The agent reads the description once when it considers whether to call the tool. **Changing `compress.looseCompressionPatterns` requires restarting OpenCode for the new instructions to take effect.** Follow the `MESSAGE_FORMAT_EXTENSION` precedent (`lib/prompts/extensions/tool.ts`) for appending to the description.
 
-For each tool part inside a compressed range whose `state.input` contains a `filePath` matching a glob in `compress.looseCompressionPatterns`:
+### Behavior contract
 
-1. **Structural skeleton is preserved.** All `#` / `##` / `###` headers, fenced code blocks (` ``` `), table headers + row dividers, and ordered list item numbers are kept in the summary output.
-2. **Three-tier content rules applied by the model:**
-   - **General information** (background, references, side-notes): preserved mostly verbatim; light compression allowed.
-   - **Sections relevant to the active task**: preserved mostly verbatim.
-   - **Sections irrelevant to the active task**: heavily compressed — a 1–3 line summary explaining the section's topic and focus, no verbatim content.
-3. **Synthetic header injected at the top** of the compressed file content in the summary block:
+1. **Plugin-side matching (synthetic header only).** For each tool part in the compressed range whose `state.input` contains a `filePath` matching a glob in `compress.looseCompressionPatterns`, the plugin records the matched paths and (after the agent returns the summary) prepends a single header line listing them.
+2. **Agent-side matching (loss-aware compression).** The agent reads the "Loose Compression" section of the description and applies per-pattern instructions to file reads it identifies in the compressed range.
+3. **Synthetic header injected** at the top of the summary block:
    ```
-   Compressed summary of `<path/to/file.md>`. Some sections may have been heavily summarized. Re-read those sections if needed.
+   Loose-compressed: <path1.md>, <path2.md>. These files were loss-aware-compressed; consider re-reading if a heavily-summarized section is needed.
    ```
-   `<path/to/file.md>` is the actual file path. The synthetic line is appended by the plugin after the model returns the summary; the model does not write it.
+   One header per compress call (not per file). If multiple files matched, they're listed comma-separated. The header is appended by the plugin after the model returns the summary; the model does not write it.
+4. **Plugin-side precedence enforcement.** Loose-matched tool parts are excluded from `appendProtectedTools`'s full-output-append path (`lib/compress/protected-content.ts:106-196`) at the `isToolProtected` gate (`:130-137`). This guarantees loose compression wins over `protectedFilePatterns` — the agent doesn't see the file content verbatim-appended on top of its own summary.
 
 ### Config shape
 
@@ -60,126 +58,123 @@ For each tool part inside a compressed range whose `state.input` contains a `fil
 }
 ```
 
-- Object form (pattern → instruction string) is preferred over a string array of patterns. The instruction string is appended to the summary prompt, giving per-pattern guidance. A string array of plain globs (no instructions) is acceptable but loses the biasing value.
-- Schema: `additionalProperties: { type: "string" }` (or pattern-validated if stricter typing is wanted).
+- Object form (pattern → instruction string) is preferred over a string array of patterns. The instruction string is appended to the description, giving per-pattern guidance.
+- Schema: `additionalProperties: { type: "string" }` (pattern-validated stricter typing is optional).
 - Default: `{}` (empty — no loose compression applied; existing behavior preserved everywhere).
+- **Config-key recursion warning:** the object value requires a `modelMaxLimits`-style special case in `getConfigKeyPaths` (`lib/config.ts:157`) so user pattern keys are not flagged as "Unknown key" warnings. See "Implementation sketch" step 1 for details.
+
+### Three-tier rules (what the agent is told)
+
+The "Loose Compression" section of the description instructs the agent:
+
+- **Preserve section headers, file paths, function/method signatures, and config keys verbatim** in summaries of matched files.
+- **Preserve code identifiers verbatim.**
+- **Light prose compression is allowed** where meaning is unambiguous.
+- **Heavily summarize only sections clearly irrelevant to the current active task** — a 1–3 line summary of the section's topic and focus.
+- **If you cannot determine whether a tool output came from a matched file**, apply normal compression rules.
 
 ---
 
-## Option A — Prompt-injection
+## Option A — Static description embedding
 
-**Approach:** The plugin appends per-pattern instructions to the summary prompt. The model sees the original document content AND the additional rules, and decides what to keep, summarize, or remove.
+**Approach:** A `lib/compress/loose-instructions.ts` module reads `compress.looseCompressionPatterns` at registration and formats a "Loose Compression" section listing all patterns + instructions. This is appended to the tool description at `lib/compress/message.ts:50` and `lib/compress/range.ts:63` via the `MESSAGE_FORMAT_EXTENSION` pattern.
 
 **Key code anchors:**
 
 | Anchor | What it is |
 |---|---|
-| `lib/prompts/compress-message.ts:1-43` | Static summary prompt for message-mode compress |
-| `lib/prompts/compress-range.ts` | Sibling prompt for range-mode compress (read full file before editing) |
-| `lib/compress/message.ts:113` | Where the prompt is passed to the model (`summaryWithPromptInfo`) |
-| `lib/compress/range.ts:60` | Same for range mode |
-| `lib/compress/protected-content.ts:128-137` | Where file-pattern matching currently gates `protectedFilePatterns` (mirror this) |
+| `lib/prompts/compress-message.ts:1-43` | Static summary prompt (description source) |
+| `lib/prompts/compress-range.ts` | Sibling prompt for range-mode compress |
+| `lib/compress/message.ts:50` | Tool description construction (registration-time) — the injection point |
+| `lib/compress/range.ts:63` | Same for range mode |
+| `lib/prompts/extensions/tool.ts` | `MESSAGE_FORMAT_EXTENSION` — append-precedent for tool descriptions |
+| `lib/compress/protected-content.ts:106-196` | `appendProtectedTools` — needs suppression gate at `:130-137` |
 | `lib/protected-patterns.ts:61-99` | `getFilePathsFromParameters` — extracts paths from tool input |
 | `lib/protected-patterns.ts:101-106` | `isFilePathProtected` — glob match |
-| `lib/config.ts:111-147` | Existing pattern for adding a new compress.* key (clone) |
+| `lib/config.ts:120-139, 356-643, 787-805, 948-982, 1054-1059` | Full 6-site pattern for adding a compress.* key |
+| `lib/config.ts:157` | `getConfigKeyPaths` special-case precedent (`modelMaxLimits`) for object-valued keys |
 | `dcp.schema.json:131-302` | Existing compress.* schema block (clone entry) |
 
 **Implementation sketch:**
 
-1. New config key + schema entry + merge helper (~25 lines).
-2. New module `lib/compress/loose-instructions.ts` exporting `buildLooseCompressionPrompt(parts, patterns): string`. Iterates tool parts in the compressed range, matches `filePath` against patterns via existing `isFilePathProtected`, returns the joined instructions. ~40 lines.
-3. Inject the returned string into the summary prompt in both `message.ts:113` and `range.ts:60`. ~10 lines.
-4. Synthetic-line injection: append after the model returns its summary, in the same code path that currently appends protected outputs. ~10 lines.
-5. Tests: pattern match (single + multi), no-match, empty config, precedence over `protectedFilePatterns` / `protectTags`. ~80 lines.
+1. New config key + schema entry + merge helper (~30 lines, including the `getConfigKeyPaths` special case so user pattern keys aren't flagged as unknown).
+2. New module `lib/compress/loose-instructions.ts` exporting `buildLooseCompressionDescription(config): string`. Reads `compress.looseCompressionPatterns`, formats all patterns + instructions into a description appendix. Returns empty string if no patterns configured. ~30 lines.
+3. Append the returned string to the tool description in both `message.ts:50` and `range.ts:63`:
+   ```ts
+   description: runtimePrompts.compressMessage
+                + MESSAGE_FORMAT_EXTENSION
+                + buildLooseCompressionDescription(ctx.config)
+   ```
+   ~5 lines.
+4. Plugin-side precedence suppression: in `lib/compress/protected-content.ts:130-137`, add a second gate that excludes parts matching `compress.looseCompressionPatterns` from `isToolProtected = true`. This prevents `appendProtectedTools` from appending the full output on top of the agent's loose-compressed summary. ~15 lines.
+5. Plugin-side synthetic header: in the same compress tool paths (`message.ts` post-hoc, `range.ts` post-hoc), collect matched paths from `plan.selection` and prepend one header line listing them. ~25 lines.
+6. Tests: pattern match (single + multi), no-match, empty config, precedence over `protectedFilePatterns` (assert `appendProtectedTools` is NOT called with loose-matched parts), synthetic header content, description content (assert registered tool description contains expected pattern strings). ~100 lines.
 
-**Total estimate:** ~150 lines. Fork bumps to **3.1.18** (patch).
+**Total estimate:** ~200 lines. Fork bumps to **3.1.18** (patch).
 
 **Trade-offs:**
 - ✓ Cheap. Few new code paths.
-- ✓ Reuses existing prompt infrastructure.
+- ✓ Reuses existing `MESSAGE_FORMAT_EXTENSION` precedent.
 - ✓ Per-pattern instruction lets users tune behavior to document type.
-- ✗ Model-compliance dependent. The model can still decide to drop content the rules said to keep. In practice compliance is high (~90%) when rules are specific.
-- ✗ No deterministic structure preservation — the structural skeleton rule relies on the model respecting markdown conventions. A misbehaving model could paraphrase headers.
+- ✓ Plugin-side suppression guarantees precedence over `protectedFilePatterns` (no model-dependent resolution).
+- ✗ Model-compliance dependent for the actual loss-aware compression — the agent decides what to keep/summarize. In practice compliance is high (~90%) when rules are specific.
+- ✗ Config changes require restart (static description).
+- ✗ The "cannot determine whether a tool output came from a matched file" clause is a real escape hatch — if the agent misidentifies, normal compression applies.
 
 ---
 
-## Option B — Structural preservation
+## Option B — Structural skeleton preservation (DEFERRED)
 
-**Approach:** Before the model sees the document, the plugin extracts the markdown structural skeleton (headers, fenced code blocks, table headers/rows, ordered list numbers) and replaces prose with `[STRUCTURE_PRESERVED]` placeholders. The model receives a marked-up document containing structure-only regions and prose-only regions. Its summary must preserve the structure regions verbatim and summarize the prose regions.
+The originally-proposed Option B ("plugin extracts markdown structural skeleton before the model sees the document") is **not implementable as written** — the only pre-model injection point is the static description (already used by Option A), and the per-tool-part chat-transform hook (`createChatMessageTransformHandler` in `lib/hooks.ts:108-173`) would mutate every matched document in the live context during normal work, which is a far bigger and riskier feature than described.
 
-**Key code anchors (in addition to Option A's):**
+A post-hoc variant — extract the skeleton after the agent returns its summary and append it to the summary block — would mirror `appendProtectedTools` (`lib/compress/protected-content.ts:106-196`) but **deterministically inflates `summaryTokens`** by the skeleton size, which interacts badly with the v2 `maxCompactionRatio` guard: a skeleton that is a large fraction of the original document triggers non-compacting runs and the `recoveryForced` path that this feature is meant to *avoid*.
 
-| Anchor | What it is |
-|---|---|
-| `lib/protected-patterns.ts:1-129` (full file) | Existing patterns module — good template for a sibling module |
-| New file `lib/compress/markdown-structure.ts` | Structure extractor (to be created) |
-| New file `lib/compress/loose-compression.ts` | Glue between extractor + prompt builder (to be created) |
-
-**Implementation sketch:**
-
-1. **Same as Option A** for config key, schema, synthetic-line injection.
-2. New module `lib/compress/markdown-structure.ts`:
-   - `extractStructure(text): { preserved: string, summarizable: string, sectionMap: Record<sectionId, sectionTitle> }` — ~100-150 lines.
-   - Uses regex-based detection for `^#{1,6} ` headers, `^``` ` fenced code blocks, `^\|.*\|` table rows, `^\d+\.` ordered list items.
-   - Returns a marked-up version of the document where preserved regions are tagged with sentinel lines the prompt can reference, and summarizable regions are stripped of their structure.
-3. New module `lib/compress/loose-compression.ts`:
-   - `applyLooseCompression(text, patterns): { preserved: string, summarizable: string, instructions: string }` — ~80-100 lines.
-   - Calls the extractor, builds per-pattern instructions, returns both halves for the prompt builder.
-4. Modified `lib/compress/message.ts:113` and `range.ts:60` — pass the marked-up content to the model, with prompt text describing the sentinel convention.
-5. Synthetic-line injection: same as Option A.
-6. Tests: structure extraction (headers, code, tables, lists), fallback for non-markdown content, no-match path, precedence. ~150 lines.
-
-**Total estimate:** ~400-500 lines. Fork bumps to **3.2.0** (minor — prompt format changes).
-
-**Trade-offs:**
-- ✓ Deterministic structure preservation — headers, code blocks, table headers, list numbers are guaranteed to survive in the summary.
-- ✓ Better fits the three-tier content rules — the structure extractor can mark section boundaries, giving the model reliable "this is section X, decide its tier" signals.
-- ✓ The synthetic header line and "re-read if needed" guidance become fully reliable (not model-dependent).
-- ✗ Fragile on non-markdown content. A `.txt` file or a `cat` of binary-ish output has no structure to extract; needs a graceful "no structure found → fall back to Option A behavior" path.
-- ✗ Heavier. ~3× the line count of Option A.
+**Decision:** Option B is **deferred** to a future major version (3.2.0+) where it can be designed against an actual mechanism. Option A at 3.1.18 is the ship target.
 
 ---
 
 ## Where to start (next steps)
 
-Before either option can be implemented, these open questions need resolution:
+Before implementation, these open questions need resolution:
 
-1. **Pattern instruction wording** — should the schema validate that instructions are non-empty strings, or allow empty (pattern-only, no instruction)? Recommendation: non-empty, model biasing is the whole point.
-2. **Synthetic line format** — exact wording, placement (top of summary block vs top of each file's section), localization. The proposed wording above is a draft; final wording decided at implementation time.
-3. **Precedence semantics under conflict** — if a file is in `looseCompressionPatterns` AND `protectedTools` (a tool-name glob, not file pattern), who wins? Recommendation: `protectedTools` wins for tool-name level (e.g., user said "never summarize `mcp_*` outputs"), `looseCompressionPatterns` wins for file-pattern level. Document the resolution order in MY_README.
-4. **Logging** — should compress calls that applied loose compression emit a debug log line identifying which files matched? Recommendation: yes, gated on `debug: true`.
-5. **Per-pattern vs global rules** — should we allow a single instruction that applies to ALL matched files (no per-pattern customization)? Recommendation: optional. If `looseCompressionPatterns: { "**/*.md": "preserve structure, summarize prose" }` (single key), apply globally. If multiple keys, per-pattern. The current object form already supports both.
+1. **Pattern instruction wording** — schema should require non-empty instruction strings (the instruction IS the feature; empty instructions provide no biasing value). **RESOLVED.** Pattern-validated stricter typing optional.
+2. **Synthetic header format** — single per-summary line listing matched paths, plugin-injected. **RESOLVED** (see Behavior contract item 3).
+3. **`protectedTools` vs loose precedence** — `protectedTools` (tool-name glob) wins at the tool level; loose wins at the file-pattern level. Matches `lib/compress/protected-content.ts:130-137` gate order. **RESOLVED.**
+4. **Debug logging** — emit a `logger.debug` line per compress call identifying matched paths + whether synthetic header was injected. Precedent: `lib/compress/pipeline.ts:152-159` warn pattern. **RESOLVED** yes.
+5. **Per-pattern vs global rules** — object form supports both. Single-key object applies globally; multi-key object applies per-pattern. **RESOLVED** — no code needed.
+6. **`experimental.customPrompts` interaction** — when a user overrides `compress-message.md`, the appended `MESSAGE_FORMAT_EXTENSION` and `buildLooseCompressionDescription` land AFTER the override. Plugin-controlled. **RESOLVED.** Document this in MY_README.
+7. **Interaction with default `compress.protectedTools: ["task", …]`** — `task` outputs are already verbatim-appended by default. Loose compression's file-pattern matching does not conflict (no `filePath` in `task` inputs), but if a user adds `mcp_*` to `protectedTools` AND a `mcp_*` tool reads a matched file, both protections apply. Plugin-side suppression handles this. **RESOLVED.**
 
 ---
 
 ## Verification recipe (after implementation)
 
-1. **Unit:** schema validates new key; config merge handles empty + populated; precedence rules produce expected routing.
-2. **Integration:** create a fixture `read` of a markdown plan file with 3 sections (general, task-relevant, task-irrelevant); trigger compress on a range that includes it; assert (a) summary contains all section headers, (b) task-irrelevant section is ≤3 lines, (c) synthetic header line is prepended.
-3. **Regression:** ensure all 165 existing tests still pass; no v2 protocol invariants broken; `recoveryForced` no longer triggered by loose-compressed files at default `maxCompactionRatio: 0.7`.
-4. **Smoke:** restart OpenCode, run `/dcp-compress` against a session containing a known plan file, observe summary text in TUI.
+1. **Unit:** schema validates the new key; config merge handles empty + populated; `buildLooseCompressionDescription` returns expected strings for empty, single-key, multi-key configs; `getConfigKeyPaths` does NOT warn on user pattern keys.
+2. **Integration:** construct a `ToolContext` with `compress.looseCompressionPatterns` set; call `createCompressMessageTool(ctx)`; assert the registered tool **description** contains the expected pattern strings (NOT the runtime prompt — the description IS what the agent sees).
+3. **Precedence:** with `looseCompressionPatterns` AND `protectedFilePatterns` both set to match the same path, trigger a compress call; assert `appendProtectedTools` is NOT called with the matching part (`lib/compress/protected-content.ts:106-196` skip path).
+4. **Synthetic header:** trigger a compress call with matched paths; assert the resulting summary block (or notification) starts with the `Loose-compressed: <paths>` header line.
+5. **Regression:** all 165 existing tests still pass; no v2 protocol invariants broken; `recoveryForced` semantics unchanged.
+6. **Smoke (post-restart):** restart OpenCode (config change), run `/dcp-compress` against a session containing a known plan file; observe the synthetic header + summary text in TUI.
 
 ---
 
-## File / module inventory (post-implementation, fork 3.1.18 or 3.2.0)
+## File / module inventory (post-implementation, fork 3.1.18)
 
 | File | Status | Purpose |
 |---|---|---|
-| `lib/compress/loose-instructions.ts` | NEW (Option A only) | Build per-pattern prompt instructions |
-| `lib/compress/markdown-structure.ts` | NEW (Option B only) | Extract markdown structural skeleton |
-| `lib/compress/loose-compression.ts` | NEW (Option B only) | Glue: extractor + prompt builder |
-| `lib/compress/message.ts` | MODIFIED | Inject loose instructions into summary prompt |
+| `lib/compress/loose-instructions.ts` | NEW | `buildLooseCompressionDescription(config)` helper |
+| `lib/compress/message.ts` | MODIFIED | Append loose description at `:50`; prepend synthetic header post-hoc |
 | `lib/compress/range.ts` | MODIFIED | Same |
-| `lib/compress/protected-content.ts` | MODIFIED | Synthetic header line injection after summary |
-| `lib/config.ts` | MODIFIED | New key + merge + validation |
+| `lib/compress/protected-content.ts` | MODIFIED | Precedence suppression at `:130-137`; exclusion of loose-matched parts |
+| `lib/config.ts` | MODIFIED | New key + merge + validation + `getConfigKeyPaths` special case |
 | `dcp.schema.json` | MODIFIED | New entry |
 | `tests/loose-compression.test.ts` | NEW | Unit + integration tests |
 | `MY_README.md` | MODIFIED | New section: "Loose Compression Patterns" |
-| `MY_CHANGELOG.md` | MODIFIED | New entry for 3.1.18 or 3.2.0 |
-| `LOOSE_COMPRESSION_PROPOSAL.md` (this file) | MOVED to `docs/` | Final design doc |
+| `MY_CHANGELOG.md` | MODIFIED | New entry for 3.1.18 |
+| `MY_LOOSE_COMPRESSION.md` (this file) | MOVED to `docs/` | Final design doc |
 
 ---
 
 ## Related features
 
-- **`MY_PROJECT_CONTEXT_PRESERVATION.md`** — a complementary, **independent** feature that uses the agent's own dispatch memory (rather than file-glob matching) to preserve project-context knowledge during compression. Project context preservation handles semantic preservation (subagent outputs + plans/docs read during discovery); loose compression handles deterministic structural preservation (file-glob-keyed, markdown skeleton extraction under Option B). The two features compose: both can be active at once without conflict.
+- **`MY_PROJECT_CONTEXT_PRESERVATION.md`** — a complementary, **independent** feature that uses the agent's own dispatch memory (rather than file-glob matching) to preserve project-context knowledge during compression. Project context preservation handles semantic preservation (subagent outputs + plans/docs read during discovery); loose compression handles deterministic structural preservation (file-glob-keyed). The two compose: both can be active at once without conflict — they target different detection signals and apply to different messages in the same compress call.
