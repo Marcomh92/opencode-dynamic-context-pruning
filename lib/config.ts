@@ -1,7 +1,16 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs"
 import { join, dirname } from "path"
 import { homedir } from "os"
-import { parse } from "jsonc-parser/lib/esm/main.js"
+// ponytail: resolve via the package's `main` field (CJS UMD) instead of the
+// deep ESM path. Same library, same `parse` function — only the loader path
+// changes. The deep path `jsonc-parser/lib/esm/main.js` works for bundlers
+// (tsup bundles it via noExternal) but trips Node 24 + tsx in test mode
+// because the file uses ESM syntax inside a CJS package (no `type: "module"`),
+// so Node's static-export analysis can't expose named exports. The CJS UMD
+// build sets `exports.parse = parser.parse` and Node's ESM-CJS interop
+// surfaces that as a real named export. Revert to the deep path if/when the
+// upstream package ships a proper `exports` map with an ESM entry.
+import { parse } from "jsonc-parser"
 import type { PluginInput } from "@opencode-ai/plugin"
 
 type Permission = "ask" | "allow" | "deny"
@@ -81,20 +90,15 @@ export interface PluginConfig {
 
 type CompressOverride = Partial<CompressConfig>
 
-const DEFAULT_PROTECTED_TOOLS = [
-    "task",
-    "skill",
-    "todowrite",
-    "todoread",
-    "compress",
-    "batch",
-    "plan_enter",
-    "plan_exit",
-    "write",
-    "edit",
-]
+// ponytail: empty by design. The user's dcp.jsonc is the single source of truth
+// for protectedTools — any non-empty constant here would silently leak through
+// the layered merge (the merge in mergeCompress / mergeCommands / mergeStrategies
+// is replace-semantics per user override). See README "Protected tools" for the
+// migration story: prior behavior shipped an additive default of ["task","skill",
+// "todowrite","todoread"]; the user's explicit list now fully dictates protection.
+const DEFAULT_PROTECTED_TOOLS: string[] = []
 
-const COMPRESS_DEFAULT_PROTECTED_TOOLS = ["task", "skill", "todowrite", "todoread"]
+const COMPRESS_DEFAULT_PROTECTED_TOOLS: string[] = []
 
 export const VALID_CONFIG_KEYS = new Set([
     "$schema",
@@ -925,22 +929,16 @@ function mergeStrategies(
     return {
         deduplication: {
             enabled: override.deduplication?.enabled ?? base.deduplication.enabled,
-            protectedTools: [
-                ...new Set([
-                    ...base.deduplication.protectedTools,
-                    ...(override.deduplication?.protectedTools ?? []),
-                ]),
-            ],
+            // ponytail: replace-semantics per user override — see mergeCompress rationale.
+            protectedTools:
+                override.deduplication?.protectedTools ?? base.deduplication.protectedTools,
         },
         purgeErrors: {
             enabled: override.purgeErrors?.enabled ?? base.purgeErrors.enabled,
             turns: override.purgeErrors?.turns ?? base.purgeErrors.turns,
-            protectedTools: [
-                ...new Set([
-                    ...base.purgeErrors.protectedTools,
-                    ...(override.purgeErrors?.protectedTools ?? []),
-                ]),
-            ],
+            // ponytail: replace-semantics per user override — see mergeCompress rationale.
+            protectedTools:
+                override.purgeErrors?.protectedTools ?? base.purgeErrors.protectedTools,
         },
     }
 }
@@ -965,7 +963,13 @@ function mergeCompress(
         nudgeFrequency: override.nudgeFrequency ?? base.nudgeFrequency,
         iterationNudgeThreshold: override.iterationNudgeThreshold ?? base.iterationNudgeThreshold,
         nudgeForce: override.nudgeForce ?? base.nudgeForce,
-        protectedTools: [...new Set([...base.protectedTools, ...(override.protectedTools ?? [])])],
+        // ponytail: replace-semantics, not additive. The user's dcp.jsonc is the
+        // single source of truth — `protectedTools: []` must mean "nothing
+        // protected", not "merge with the hardcoded default". Pre-fix this line
+        // was `[...new Set([...base.protectedTools, ...override.protectedTools ?? []])]`,
+        // which silently kept the legacy default alive. Add when the user asks
+        // for inheritance from a different layer (e.g., env-scoped).
+        protectedTools: override.protectedTools ?? base.protectedTools,
         protectTags: override.protectTags ?? base.protectTags,
         protectUserMessages: override.protectUserMessages ?? base.protectUserMessages,
         // v2 fork protocol
@@ -1009,7 +1013,8 @@ function mergeCommands(
 
     return {
         enabled: override.enabled ?? base.enabled,
-        protectedTools: [...new Set([...base.protectedTools, ...(override.protectedTools ?? [])])],
+        // ponytail: replace-semantics per user override — see mergeCompress rationale.
+        protectedTools: override.protectedTools ?? base.protectedTools,
     }
 }
 
