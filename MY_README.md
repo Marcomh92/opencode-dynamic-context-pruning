@@ -253,18 +253,18 @@ ${LOCALAPPDATA}/Temp/                                 ← C:\Users\marco\AppData
 ```
 
 ## Build Verification (Current)
-- **Last Build Date:** 2026-08-05 (after M2.5b)
+- **Last Build Date:** 2026-08-06 (after PCP + Task State prompt-text additions, including Task State wording refinement)
 - **Build Status:** SUCCESS
 - **Build Output:**
-  - `dist/index.js` 722.17 KB (was 272 KB upstream — increased because M1 bundles `@opencode-ai/plugin`)
-  - `dist/index.js.map` 1.33 MB
+  - `dist/index.js` 729.27 KB (was 272 KB upstream — increased because M1 bundles `@opencode-ai/plugin`; +7.10 KB for the two prompt additions: PCP ~6 KB + Task State ~1.17 KB with wording refinement)
+  - `dist/index.js.map` 1.35 MB
   - Target: ES2022
   - Bundler: tsup v8.5.1
 - **Typecheck:** `bun run typecheck` clean (no output)
 - **Bootstrap note:** OpenCode loads `dist/index.js` via `package.json:main`. After ANY source edit, run `bun run build` before restarting OpenCode — the running process will silently use the stale dist if you skip the rebuild.
 
 ## Test Results (Current)
-- **Test Execution Date:** 2026-08-05 (after M2.5d)
+- **Test Execution Date:** 2026-08-06 (after PCP + Task State prompt-text additions)
 - **Test Status:** ALL PASSED
 - **Test Counts:**
   - tests: 195 (was 87 upstream; +108 new across M2 / M2.5 / M2.5b / M3 / M4 / M5 / M2.5c / M2.5d; -2 validateRangeSanity tests removed in M2.5b)
@@ -305,7 +305,8 @@ ${LOCALAPPDATA}/Temp/                                 ← C:\Users\marco\AppData
 - **Dead code: `sendUnifiedNotification` in `notification.ts:165-207`** has zero callers in the fork. Defer to a future deletion pass.
 - **PII surface:** `logger.saveContext` dumps full message text/reasoning/tool IO to `~/.config/opencode/logs/dcp/context/<sessionId>/` with no opt-out and no redaction. Local-only so no AGPL §13 issue, but worth a config flag in a future cleanup pass.
 - **Tests typecheck gap:** `tsconfig.json` excludes `tests/` from `tsc --noEmit`, so test-file type drift is invisible to `bun run typecheck`. Tests still pass via `node --import tsx --test`, but the heterogeneous boundary is a hair-thin safety net.
-- **Project Context Preservation prompt addition (2026-08-06):** `lib/prompts/compress-message.ts:44-52` and `lib/prompts/compress-range.ts:61-69` now carry a `PROJECT CONTEXT PRESERVATION` section (~95 words, identical text in both files). Instructs the agent to apply loss-aware compression to project-context knowledge it has gathered (headers, file paths, signatures, config keys, code identifiers preserved verbatim; tiered rules for general/task-relevant/task-irrelevant content). **No off-switch** — only `experimental.customPrompts` user overrides can replace the bundled text. **`compress.protectedTools: ["task", …]` overlap risk:** `task` outputs are already verbatim-appended by `appendProtectedTools` (`lib/compress/protected-content.ts:139-184`); the new prompt text now also asks the agent to preserve that knowledge, which can stack to inflated `summaryTokens` and trip the v2 `recoveryForced` path. **Mitigation if summaries bloat:** explicitly drop `"task"` from `compress.protectedTools` in `dcp.jsonc`. Monitor `/dcp stats` for recoveryForced regressions.
+- **Project Context Preservation prompt addition (2026-08-06):** `lib/prompts/compress-message.ts` and `lib/prompts/compress-range.ts` now carry two trailing sections: `PROJECT CONTEXT PRESERVATION` (~95 words) and `TASK STATE` (~70 words), identical text in both files. PCP instructs the agent to apply loss-aware compression to project-context knowledge it has gathered (headers, file paths, signatures, config keys, code identifiers preserved verbatim; tiered rules for general/task-relevant/task-irrelevant content). TASK STATE instructs the agent to capture structured meta-state alongside the content summary: Current task / Done / Remaining / Issues. **No off-switch** for either — only `experimental.customPrompts` user overrides can replace the bundled text. **`compress.protectedTools: ["task", …]` overlap risk:** `task` outputs are already verbatim-appended by `appendProtectedTools` (`lib/compress/protected-content.ts:139-184`); the new PCP prompt text now also asks the agent to preserve that knowledge, which can stack to inflated `summaryTokens` and trip the v2 `recoveryForced` path. **Mitigation if summaries bloat:** explicitly drop `"task"` from `compress.protectedTools` in `dcp.jsonc`. Monitor `/dcp stats` for recoveryForced regressions.
+- **Task State overhead is always-on (2026-08-06):** every compress pays the ~100-token prompt price (≈0.05% of 220k budget) regardless of whether the compressed range contains work artifacts. The alternative (conditional on "does this range contain work?") would require model judgement that drifts; always-on is simpler and more reliable. Trivial 3-message Q&A compresses get empty `Done:` / `Remaining:` bullets — acceptable noise.
 
 ## Post-Sync Verification
 (populated after each `git fetch upstream && git merge upstream/master`)

@@ -50,4 +50,13 @@ Knowledge you have gathered yourself about this project — how it works, its ar
 - Sections relevant to the active task: preserve closely.
 - Sections clearly irrelevant to the active task: compress to 1-3 lines naming topic and focus.
 - When unsure whether content is project knowledge, apply normal compression rules.
+
+TASK STATE
+
+Capture the work's meta-state alongside the content summary. This survives compression and lets a resumed session pick up without re-deriving the plan. Use bullet lists; empty lists are fine.
+
+- Current task: 5-10 line description of what is being worked on — capture scope, constraints, and current focus. Better too verbose than too brief.
+- Done: bullet list of completed subtasks, decisions made, or files changed.
+- Remaining: bullet list of what still has to happen.
+- Issues: bullet list of blockers, surprises, or noteworthy events that are still relevant to the work ahead.
 `

@@ -1,5 +1,32 @@
 # MY_CHANGELOG.md - Personal Change History
 
+## 2026-08-06 - Task State Capture (Prompt-Text Addition)
+- **Branch:** `fork/dcp-3.1.15-m1`
+- **Triggered by:** User follow-up to the PCP prompt-text addition. PCP preserves content (what was discussed/learned). Task State preserves work (what is being done, what's left, what's blocked). Both are needed for a resumed session to function without loss.
+- **Changes:**
+  - **`lib/prompts/compress-message.ts`** (line 53+): appended a `TASK STATE` section (~70 words) after `PROJECT CONTEXT PRESERVATION`. Instructs the agent to capture structured meta-state alongside the content summary: Current task / Done / Remaining / Issues. Empty lists acceptable when nothing applies.
+  - **`lib/prompts/compress-range.ts`** (line 70+): identical block appended after `PROJECT CONTEXT PRESERVATION`. Same duplication pattern as the PCP block (one block, two files).
+  - **No code changes.** No config keys, no schema entries. Standing per-compress overhead only (~70 words ≈ 100 tokens of prompt text).
+- **Reason for always-on rather than conditional:** the trigger condition ("does this range contain work artifacts?") would require model judgement that drifts across sessions and providers. A trivial 3-message Q&A compress pays the same ~100-token prompt price as a complex multi-tool session — acceptable cost (~0.05% of a 220k context budget).
+- **Design decision — sits alongside content rules:** the structured task-state bullets coexist with the existing content-summary rules (PCP, GENERAL CLEANUP, BATCHING, etc.) rather than replacing them. Both views survive in the summary; the agent produces one document, not two.
+- **Caveats:**
+  - Always-on overhead even for trivial compresses (3-message Q&A pays the same prompt price as a complex multi-tool session)
+  - Forces structure where none naturally exists — agent may produce minimal "Done: nothing yet" entries; acceptable noise
+  - No off-switch except `experimental.customPrompts` overrides (same caveat as PCP block)
+  - Duplication across two files (drift risk, same as PCP block)
+- **Files:** `lib/prompts/compress-message.ts`, `lib/prompts/compress-range.ts`, `MY_README.md` (caveat bullet extended)
+- **Test additions:** none (prompt-text-only change, no new code paths)
+- **Verification:** `bun run build` (729.01 KB, +0.91 KB), `bun run typecheck` (clean), `bun run test` (195/195 pass, +0 new tests)
+
+### 2026-08-06 - Task State wording refinement (same session)
+- **Triggered by:** User feedback on the two TASK STATE bullets after reading the prompt.
+- **Changes:**
+  - **`Current task`**: relaxed from "one-line description" to "5-10 line description — capture scope, constraints, and current focus. Better too verbose than too brief." Rationale: a one-line current-task summary loses too much context; the resumed session needs scope + constraints to continue without re-deriving them. Token saving was the wrong trade.
+  - **`Issues`**: added temporal scoping — "blockers, surprises, or noteworthy events that are still relevant to the work ahead." Without this, the section becomes a junk drawer (fixed bugs persist across compresses). The phrasing admits meta-knowledge (model quirks worth remembering) alongside unresolved blockers, while filtering out stale resolved issues.
+- **Files:** `lib/prompts/compress-message.ts`, `lib/prompts/compress-range.ts`
+- **Verification:** `bun run build` (729.27 KB, +0.26 KB), `bun run typecheck` (clean), `bun run test` (195/195 pass, +0 new tests)
+
+
 ## 2026-08-06 - Project Context Preservation (Prompt-Text Deviation)
 - **Branch:** `fork/dcp-3.1.15-m1`
 - **Triggered by:** User-driven deviation from the elaborate PCP feature design (`MY_PROJECT_CONTEXT_PRESERVATION.md`). Instead of the full config-key + module + conditional-clause design (150 lines), the user chose to bake a condensed preservation instruction directly into both compress prompts.
