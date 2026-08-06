@@ -1,6 +1,7 @@
 import type { Logger } from "../logger"
 import type { CompressionBlock, PruneMessagesState, SessionState, WithParts } from "../state"
 import { syncCompressionBlocks } from "../messages"
+import { syncPruneToolsFromActiveBlocks } from "../state/utils"
 import { parseBlockRef } from "../message-ids"
 import { getCurrentParams } from "../token-utils"
 import { saveSessionState } from "../state/persistence"
@@ -237,6 +238,7 @@ export async function handleDecompressCommand(ctx: DecompressCommandContext): Pr
     }
 
     syncCompressionBlocks(state, logger, messages)
+    syncPruneToolsFromActiveBlocks(state)
 
     let restoredMessageCount = 0
     let restoredTokens = 0

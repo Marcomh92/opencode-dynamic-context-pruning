@@ -10,6 +10,20 @@ Each entry must include:
 
 ---
 
+## 2026-08-05 - M2.5d Complete: Decompress / Recompress prune.tools Consistency (v3.1.19)
+- **Branch:** `fork/dcp-3.1.15-m1`
+- **Triggered by:** Post-M2.5c code review of the broader compression mechanism surfaced BUG-M1 (a real user-visible bug M2.5c did not catch — Fix 3 added the write side of `state.prune.tools` but the delete side never existed).
+- **Changes:**
+  - **BUG-M1 — Decompress silently undoing user restoration:** `lib/commands/decompress.ts` previously only flipped `block.active = false` but never updated `state.prune.tools`. After `/dcp decompress N` restored the messages into the live conversation, the next transform hook's `prune()` checked `state.prune.tools.has(callID)` and replaced the just-restored tool outputs with the placeholder. User intent (restore) silently undone.
+  - **Added `syncPruneToolsFromActiveBlocks(state)` helper** in `lib/state/utils.ts`. Rebuilds `state.prune.tools` from active blocks — drops IDs no longer covered by any active block, re-adds IDs in newly active blocks, preserves token counts from `state.toolParameters`. O(|active blocks| + |prune.tools|).
+  - **Wired into both `handleDecompressCommand`** (after `syncCompressionBlocks`, line 240-241 of `lib/commands/decompress.ts`) **and `handleRecompressCommand`** (after `syncCompressionBlocks`, line 189-190 of `lib/commands/recompress.ts`). Decompress removes the deactivated block's tool IDs; recompress re-adds the reactivated block's tool IDs. Without the recompress side, recompress would silently lose its pruning effect.
+  - **`lib/state/index.ts`**: added `export * from "./utils"` so the new helper is reachable from the package barrel (tests import it via `../lib/state`).
+  - **Ponytail trade-off** documented in the helper: sweep/strategy entries that aren't in any active block are dropped on every decompress/recompress (and re-accumulate on the next `/dcp sweep` run). This matches user intent ("decompress restores everything") and the alternative (tracking provenance per entry) is more code than the bug warrants.
+- **Version:** bumped 3.1.18 → 3.1.19.
+- **Reason:** BUG-M1 directly contradicted the user's explicit `/dcp decompress` command. Fix is the natural completion of M2.5c Fix 3 (state.prune.tools lifecycle). Tracked in M2.5d as a separate milestone because (a) the bug is decompress-path-specific, and (b) leaving it open past the M2.5c release would have undermined the smoke-test confidence the M2.5b polish earned.
+- **Files:** `lib/state/utils.ts`, `lib/state/index.ts`, `lib/commands/decompress.ts`, `lib/commands/recompress.ts`, `package.json` (3.1.18 → 3.1.19)
+- **Test additions:** new `tests/decompress-prune-tools-cleanup.test.ts` (5 cases): 3 direct unit tests for `syncPruneToolsFromActiveBlocks` (multi-block, deactivate-drops, reactivate-re-adds), plus 2 BUG-M1 integration tests (fix verifies prune() preserves output after decompress; counter-factual documents the bug's exact symptom). 190 → 195 total.
+
 ## 2026-08-05 - M2.5c Complete: Context-Stats & Cache-Friendliness Fixes (v3.1.18)
 - **Branch:** `fork/dcp-3.1.15-m1`
 - **Triggered by:** Architect review of the 472K / "phantom 400K" context anomaly (after first compress: 180K → 400K+ → 96K, then re-bloat to 470K from ~5K of new tool usage).

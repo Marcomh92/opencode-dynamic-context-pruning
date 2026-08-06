@@ -1,6 +1,7 @@
 import type { Logger } from "../logger"
 import type { PruneMessagesState, SessionState, WithParts } from "../state"
 import { syncCompressionBlocks } from "../messages"
+import { syncPruneToolsFromActiveBlocks } from "../state/utils"
 import { parseBlockRef } from "../message-ids"
 import { getCurrentParams } from "../token-utils"
 import { saveSessionState } from "../state/persistence"
@@ -187,6 +188,7 @@ export async function handleRecompressCommand(ctx: RecompressCommandContext): Pr
     }
 
     syncCompressionBlocks(state, logger, messages)
+    syncPruneToolsFromActiveBlocks(state)
 
     let recompressedMessageCount = 0
     let recompressedTokens = 0

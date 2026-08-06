@@ -9,7 +9,7 @@
 - **Local Path:** `C:\Beheer\OpenCode\opencode_plugins\opencode-dynamic-context-pruning-fork` (relocated 2026-08-05 from initial `C:\Users\marco\.config\opencode_plugins\opencode-dynamic-context-pruning-fork` to match the user's existing plugin-dir convention)
 - **Fork Reason:** Local-only fork to fix 9 known upstream bugs (#592, #579, #573, #590, #588, #585, #575, #581, #595) and add a v2 reliable autonomous compress protocol. NOT published to npm; loaded via `file://` directory entry in `opencode.json`.
 - **Starting Version:** 3.1.14 (upstream HEAD at fork time)
-- **Current Version:** **3.1.18** (M1+M2+M3+M4+M5+M2.5c all landed; plan §8 complete minus M6 CI)
+- **Current Version:** **3.1.19** (M1+M2+M3+M4+M5+M2.5+M2.5b+M2.5c+M2.5d all landed; plan §8 complete minus M6 CI)
 - **Working Branch:** `fork/dcp-3.1.15-m1` (still on the M1 branch; one cumulative release per the plan's 3.1.15 / 3.1.16 / 3.1.17 / 3.1.18 versioning)
 
 ## Compilation Instructions
@@ -264,21 +264,23 @@ ${LOCALAPPDATA}/Temp/                                 ← C:\Users\marco\AppData
 - **Bootstrap note:** OpenCode loads `dist/index.js` via `package.json:main`. After ANY source edit, run `bun run build` before restarting OpenCode — the running process will silently use the stale dist if you skip the rebuild.
 
 ## Test Results (Current)
-- **Test Execution Date:** 2026-08-05 (after M2.5b)
+- **Test Execution Date:** 2026-08-05 (after M2.5d)
 - **Test Status:** ALL PASSED
 - **Test Counts:**
-  - tests: 165 (was 87 upstream; +78 new across M2/M2.5/M2.5b/M3/M4/M5; -2 validateRangeSanity tests removed in M2.5b)
-  - pass: 165
+  - tests: 195 (was 87 upstream; +108 new across M2 / M2.5 / M2.5b / M3 / M4 / M5 / M2.5c / M2.5d; -2 validateRangeSanity tests removed in M2.5b)
+  - pass: 195
   - fail: 0
   - skipped: 0
-- **Test Duration:** ~2.8 s
-- **Test Files (23 total):**
+- **Test Duration:** ~2.6 s
+- **Test Files (24 total):**
   - Upstream (14): `compress-message`, `compress-range-placeholders`, `compress-range`, `compression-groups`, `compression-targets`, `hooks-permission`, `host-permissions`, `message-ids`, `message-priority`, `message-utils`, `prompts`, `token-counting`, `token-usage`, `update`
   - **M2 / M2.5 (new)** — v2 protocol + schema/version + synthetic burn: `compress-protocol` (19 cases after removing 2 in M2.5b), `state-schema-version` (9), `synthetic-compress-burn` (5)
   - **M2.5 (new)** — hardware bootstrap: `validator-wiring` (8 cases), `state-max-age` (5 cases)
   - **M3 (new)** — Windows path: `protected-patterns` (10)
   - **M4 (new)** — subagent cache: `subagent-cache` (9 cases: 4 cold-cache / HIT / composite-key + 5 `olderWinsWrite` reference helper)
   - **M5 (new)** — UX polish: `desktop-notifications` (7 cases), `system-prompt-handler` (5 cases)
+  - **M2.5c (new)** — context-stats + cache-friendliness: `notification-header` (4), `stats-race` (7), `prune-tools-propagation` (3), `savecontext-rate-limit` (4), `synthetic-user-message-stability` (5), `append-idempotency` (4), `coalesce-save-session` (2) — +29
+  - **M2.5d (new)** — decompress/recompress prune.tools consistency: `decompress-prune-tools-cleanup` (5) — +5
 
 ## Milestone Status
 | Milestone | Status | Version | Issues Fixed | Effort |
@@ -291,6 +293,7 @@ ${LOCALAPPDATA}/Temp/                                 ← C:\Users\marco\AppData
 | M2.5 — review findings | DONE | 3.1.17 | v2 validator wiring, stateMaxAgeDays runtime, numeric sort, olderWinsWrite ref | S |
 | M2.5b — architect polish | DONE | 3.1.17 | autoUpdate default false, dispatchToast drain loop, schema accuracy, dead-code reversal, warning-log | S |
 | M2.5c — context-stats & cache-friendliness | DONE | 3.1.18 | per-compress delta headline, stats race + double-flush fix, prune.tools propagation, saveContext change-detection, synthetic summary byte-stability + append idempotency + save coalescing | S |
+| M2.5d — decompress/recompress prune.tools consistency | DONE | 3.1.19 | BUG-M1: `/dcp decompress` silently undoing user restoration; new `syncPruneToolsFromActiveBlocks` helper wired into both decompress and recompress; recompress had a latent bug exposed by the fix (wasn't re-populating prune.tools on reactivate) | XS |
 | M6 — CI expansion | SKIPPED | — | (not applicable to local-only fork) | M |
 
 ## Open Concerns / Caveats

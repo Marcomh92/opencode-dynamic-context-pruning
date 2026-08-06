@@ -347,6 +347,40 @@ export function flushPruneStats(stats: {
     return flushed
 }
 
+// M2.5c follow-up — keep state.prune.tools in sync with active blocks (BUG
+// found post-M2.5c via code review). Fix 3 added the *write* side of
+// state.prune.tools (compress populates via directToolIds), but the *delete*
+// side never existed. After /dcp decompress N deactivated a block, the tool
+// IDs stayed in state.prune.tools. The next prune() checked
+// state.prune.tools.has(callID) and replaced the just-restored tool outputs
+// with the placeholder, silently undoing the user's restoration. This helper
+// rebuilds state.prune.tools from active blocks so decompress removes and
+// recompress re-adds the right IDs.
+//
+// Ponytail: this rebuild also wipes sweep/strategy entries that aren't in any
+// active block's directToolIds. That's intentional — /dcp decompress is an
+// explicit user intent to restore ALL tool outputs that were compacted, which
+// subsumes both block-compressed and sweep-marked tools. Sweep-marked entries
+// re-accumulate on the next /dcp sweep run. O(|active blocks| + |prune.tools|).
+export function syncPruneToolsFromActiveBlocks(state: SessionState): void {
+    const activeToolIds = new Set<string>()
+    for (const blockId of state.prune.messages.activeBlockIds) {
+        const block = state.prune.messages.blocksById.get(blockId)
+        if (!block) continue
+        for (const toolId of block.directToolIds) {
+            activeToolIds.add(toolId)
+        }
+    }
+    for (const toolId of [...state.prune.tools.keys()]) {
+        if (!activeToolIds.has(toolId)) state.prune.tools.delete(toolId)
+    }
+    for (const toolId of activeToolIds) {
+        if (state.prune.tools.has(toolId)) continue
+        const entry = state.toolParameters.get(toolId)
+        state.prune.tools.set(toolId, entry?.tokenCount ?? 0)
+    }
+}
+
 export function resetOnCompaction(state: SessionState): void {
     state.toolParameters.clear()
     state.prune.tools = new Map<string, number>()
