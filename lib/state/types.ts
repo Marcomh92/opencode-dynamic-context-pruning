@@ -144,6 +144,14 @@ export interface SessionState {
     currentTurn: number
     modelContextLimit: number | undefined
     systemPromptTokens: number | undefined
+    // Diagnostic state — in-memory only, not persisted. Tracks per-fire
+    // prefix hash, fire count, and last-fire timestamp so we can attribute
+    // cache-miss events to specific transform fires. See lib/diagnostic.ts.
+    diagnostic: {
+        fireCount: number
+        lastPrefixHash: string | null
+        lastFireAt: number | null
+    }
 }
 
 /** Persisted-state schema version for the local-only fork.

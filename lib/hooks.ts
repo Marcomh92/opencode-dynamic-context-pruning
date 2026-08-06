@@ -38,6 +38,7 @@ import { type HostPermissionSnapshot } from "./host-permissions"
 import { compressPermission, syncCompressPermissionState } from "./compress-permission"
 import { checkSession, ensureSessionInitialized, saveSessionState, syncToolCache } from "./state"
 import { cacheSystemPromptTokens } from "./ui/utils"
+import { buildDiagnosticEvent } from "./diagnostic"
 
 const INTERNAL_AGENT_SIGNATURES = [
     "You are a title generator",
@@ -136,6 +137,41 @@ export function createChatMessageTransformHandler(
 
         if (state.isSubAgent && !config.experimental.allowSubAgents) {
             return
+        }
+
+        // Diagnostic fire — record prefix hash, message metrics, synthetic
+        // block counts, and the latest assistant token snapshot. Runs on
+        // every transform fire when `debug: true` so we can attribute the
+        // next context balloon to a specific fire. Best-effort: never throws
+        // into the transform pipeline. ponytail: gated on debug via Logger.
+        try {
+            const now = Date.now()
+            const event = buildDiagnosticEvent(
+                state,
+                state.sessionId,
+                output.messages,
+                now,
+            )
+            state.diagnostic.fireCount = event.fireNumber
+            state.diagnostic.lastPrefixHash = event.prefixHash
+            state.diagnostic.lastFireAt = now
+            await logger.diagnostic(event as unknown as Record<string, unknown>)
+            // Mirror a compact summary to the daily log so users can spot
+            // balloon events without parsing JSONL.
+            logger.info("DCP transform fire", {
+                fire: event.fireNumber,
+                msgs: event.messageCount,
+                bytes: event.estimatedBytes,
+                tasks: event.taskToolCount,
+                synthetic: event.synthetic.totalCount,
+                prefixChanged: event.prefixChanged,
+                cacheMiss: event.possibleCacheMiss,
+                lastCacheRead: event.lastAssistant.cacheRead,
+                lastInput: event.lastAssistant.input,
+                msSinceLast: event.msSinceLastFire,
+            })
+        } catch {
+            // Swallow — diagnostic failure must not break the transform.
         }
 
         stripHallucinations(output.messages)

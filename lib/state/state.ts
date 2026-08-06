@@ -107,6 +107,11 @@ export function createSessionState(): SessionState {
         currentTurn: 0,
         modelContextLimit: undefined,
         systemPromptTokens: undefined,
+        diagnostic: {
+            fireCount: 0,
+            lastPrefixHash: null,
+            lastFireAt: null,
+        },
     }
 }
 
@@ -146,6 +151,11 @@ export function resetSessionState(state: SessionState): void {
     state.currentTurn = 0
     state.modelContextLimit = undefined
     state.systemPromptTokens = undefined
+    state.diagnostic = {
+        fireCount: 0,
+        lastPrefixHash: null,
+        lastFireAt: null,
+    }
 }
 
 export async function ensureSessionInitialized(

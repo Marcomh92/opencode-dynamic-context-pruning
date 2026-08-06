@@ -1,4 +1,4 @@
-import { writeFile, mkdir } from "fs/promises"
+import { writeFile, mkdir, appendFile } from "fs/promises"
 import { join } from "path"
 import { existsSync } from "fs"
 import { homedir } from "os"
@@ -99,6 +99,31 @@ export class Logger {
     info(message: string, data?: any) {
         const component = this.getCallerFile(2)
         return this.write("INFO", component, message, data)
+    }
+
+    /** Append a structured diagnostic event as one JSONL line under
+     *  `{logDir}/diagnostic/{date}-{sessionShort}.jsonl`. Used for cache /
+     *  prefix tracking across transform fires — easier to parse with `jq`
+     *  than the human-readable daily log. Ponytail: gated on `enabled`
+     *  like the other methods so debug-off sessions stay quiet. */
+    async diagnostic(event: Record<string, unknown>): Promise<void> {
+        if (!this.enabled) return
+        try {
+            await this.ensureLogDir()
+            const diagDir = join(this.logDir, "diagnostic")
+            if (!existsSync(diagDir)) {
+                await mkdir(diagDir, { recursive: true })
+            }
+            const today = new Date().toISOString().split("T")[0]
+            const sessionShort = ((event.sessionId as string | null) || "unknown").substring(
+                0,
+                16,
+            )
+            const diagFile = join(diagDir, `${today}-${sessionShort}.jsonl`)
+            await appendFile(diagFile, JSON.stringify(event) + "\n")
+        } catch {
+            // Diagnostic writes are best-effort — never block the transform.
+        }
     }
 
     debug(message: string, data?: any) {
