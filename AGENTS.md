@@ -106,3 +106,72 @@ tui.tsx                 # standalone TUI panel entry
 - No end-user docs, tutorials, or marketing copy. README.md is end-facing; do not pad it.
 - No new deps without justification; the bar is "stdlib/native cannot do this in a few lines."
 - No modifications to OpenCode's session storage; this plugin is a transform layer.
+
+## Bug Report Management
+
+Bug reports live in `known_issues/`.
+
+- **When fixing:** Check `known_issues/*.md`, read if found, mark **FIXED** with date after resolving, move to `known_issues/fixed/`
+- **When creating:** Check `known_issues/` AND `known_issues/fixed/` for duplicates, use next `BUG-xxx` number, name: `BUG-xxx-short-description.md`
+
+## GitNexus — Code Intelligence
+
+Gitnexus can be used to get a deep architectural view of the codebase so you are less likely to miss dependencies, break call chains, and ship blind edits.
+
+This project is indexed by GitNexus as repo **opencode-dynamic-context-pruning**. All gitnexus_* tools are MCP tool calls — invoke them directly, **never** via the bash tool. Always pass `repo: "opencode-dynamic-context-pruning"` explicitly.
+
+#### Index maintenance (escape hatch — only when needed)
+
+The only gitnexus action that uses the bash tool is rebuilding a stale index. Verify staleness first with `gitnexus_query({query: "project overview", repo: "opencode-dynamic-context-pruning"})`. If it reports a stale or missing index, run from the project root:
+
+```
+gitnexus analyze
+```
+
+Skip this step if `project overview` returns current results.
+
+### Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream", repo: "opencode-dynamic-context-pruning"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes({repo: "opencode-dynamic-context-pruning"})` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept", repo: "opencode-dynamic-context-pruning"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName", repo: "opencode-dynamic-context-pruning"})`.
+- **MUST pass `repo: "opencode-dynamic-context-pruning"` in every gitnexus_* tool call** — the parameter is technically optional with one indexed repo, but omitting it produces errors in this environment.
+
+### Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+- NEVER invoke gitnexus_* tools via the bash tool — they are MCP tools. The single bash exception is `gitnexus analyze` for rebuilding a stale index.
+
+### Quick Reference
+
+> Every example below includes `repo: "opencode-dynamic-context-pruning"`. Do not omit it.
+
+#### Discover Repositories
+```
+gitnexus_list_repos()
+```
+
+#### Codebase Overview & Staleness Check
+```
+gitnexus_query({query: "project overview", repo: "opencode-dynamic-context-pruning"})
+```
+
+#### Functional Areas (Clusters)
+```
+gitnexus_cypher({query: "MATCH (c:Community) RETURN c.heuristicLabel, c.symbolCount, c.cohesion ORDER BY c.symbolCount DESC", repo: "opencode-dynamic-context-pruning"})
+```
+
+#### Execution Flows (Processes)
+```
+gitnexus_cypher({query: "MATCH (p:Process) RETURN p.heuristicLabel, p.stepCount, p.processType ORDER BY p.stepCount DESC", repo: "opencode-dynamic-context-pruning"})
+```
+
+#### Step-by-Step Execution Trace
+```
+gitnexus_cypher({query: "MATCH (s)-[r:CodeRelation {type: 'STEP_IN_PROCESS'}]->(p:Process) WHERE p.heuristicLabel = 'ProcessName' RETURN s.name, r.step ORDER BY r.step", repo: "opencode-dynamic-context-pruning"})
+```
