@@ -3,6 +3,7 @@ dist/
 node_modules/
 .dcp/
 coverage/
+.gitnexus/
 *.min.js
 *.min.css
 

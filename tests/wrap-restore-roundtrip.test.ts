@@ -60,7 +60,12 @@ function messageBoundary(messageId: string, rawIndex: number): BoundaryReference
     return { kind: "message", messageId, rawIndex }
 }
 
-const OPEN_TAG_RE = new RegExp("<dcp-message-id>")
+// Matches the opening-tag header that wrapCompressedSummary writes and
+// restoreSummary must strip. Mirrors the regex in
+// lib/compress/range-utils.ts:376 — keep them in sync. Without this real
+// pattern, assert.doesNotMatch(..., new RegExp("")) silently no-ops because
+// /(?:)/ matches the empty string at every position.
+const OPEN_TAG_RE = /^\s*\[Compressed conversation(?: section)?(?: b\d+)?\]/i
 
 /** Drive the round-trip through the public `injectBlockPlaceholders` API.
  *  Asserts the expanded summary contains the original body cleanly with no

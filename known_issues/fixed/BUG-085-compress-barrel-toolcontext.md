@@ -77,3 +77,11 @@ Or delete the line entirely — no consumer reaches `ToolContext` via this barre
 
 - Discovered while fixing `tests/permission-gates.test.ts:34` syntax error (TypeScript `type` keyword in destructure).
 - No other test imports `../index` dynamically, so no other test currently exposes this bug.
+
+## Status
+
+Fixed 2026-08-07
+
+## Resolution
+
+Changed `export { ToolContext }` to `export type { ToolContext }` at `lib/compress/index.ts:1`. All callers use `import type` so the change is safe.

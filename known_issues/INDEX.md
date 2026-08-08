@@ -141,6 +141,7 @@ The following reports describe the same root cause or surface. Fix once, mark th
 | BUG-082 | Add runtime assertion that `INTERNAL_PROMPT_EXTENSIONS` keys disjoint from `PROMPT_KEYS`                                                                   | Suggestion                    | Fixed  | 2026-08-07 |
 | BUG-083 | Log a warning when `MESSAGE_REF_MAX_INDEX` is approached (one-shot flag)                                                                                   | Suggestion                    | Fixed  | 2026-08-07 |
 | BUG-084 | Validate `protectedTools` entries at config load with regex (`/^\S+$/`, not the report's tighter charset)                                                  | Suggestion                    | Fixed  | 2026-08-07 |
+| BUG-085 | lib/compress/index.ts re-exports type-only `ToolContext` as a value                                                                                        | High                          | Fixed  | 2026-08-07 |
 
 _Move files to `fixed/` and add a row here when resolved._
 

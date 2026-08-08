@@ -24,6 +24,7 @@ import {
     resolveCompressionDuration,
 } from "./compress/timing"
 import { filterMessages, filterMessagesInPlace } from "./messages/shape"
+import { getLastUserMessage } from "./messages/query"
 import {
     handleContextCommand,
     handleDecompressCommand,
@@ -375,9 +376,20 @@ export function createCommandExecuteHandler(
                 const prompt = await handleManualTriggerCommand(commandCtx, "compress", userFocus)
 
                 state.manualMode = "compress-pending"
+                // BUG-029: capture the slash-command user message's id at
+                // slash-command time. The `command.execute.before` hook
+                // input carries no message id (per the OpenCode SDK), so we
+                // identify the originating message by walking the messages
+                // we just fetched. This runs synchronously with the slash
+                // command — the user cannot type a new message until this
+                // handler returns — so the last non-ignored user message is
+                // the slash-command message in the common case. The
+                // backward-walk fallback in `applyPendingManualTrigger` is
+                // retained for legacy / unusual paths.
                 state.pendingManualTrigger = {
                     sessionId: input.sessionID,
                     prompt,
+                    commandMessageId: getLastUserMessage(messages)?.info.id,
                 }
                 const rawArgs = (input.arguments || "").trim()
                 output.parts.length = 0
