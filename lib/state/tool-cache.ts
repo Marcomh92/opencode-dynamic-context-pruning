@@ -61,13 +61,20 @@ export function syncToolCache(
                     turn: turnCounter,
                     tokenCount,
                 })
-                logger.info(
+                // BUG-027: per-tool-part info-level log was spamming disk on
+                // debug-enabled sessions (one line per cached tool part, every
+                // fire). Downgrade to debug — the aggregate "Synced cache"
+                // line below still surfaces cache-fill metrics at info level.
+                logger.debug(
                     `Cached tool id: ${part.callID} (turn ${turnCounter}${tokenCount !== undefined ? `, ${tokenCount} tokens` : ""})`,
                 )
             }
         }
 
-        logger.info(
+        // BUG-027: downgraded from info to debug — this fires once per
+        // syncToolCache call already; the per-part line above used to add N
+        // more at info level.
+        logger.debug(
             `Synced cache - size: ${state.toolParameters.size}, currentTurn: ${state.currentTurn}`,
         )
         trimToolParametersCache(state)

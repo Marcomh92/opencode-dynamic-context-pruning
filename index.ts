@@ -1,11 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { getConfig } from "./lib/config"
 import { createCompressMessageTool, createCompressRangeTool } from "./lib/compress"
-import {
-    compressDisabledByOpencode,
-    hasExplicitToolPermission,
-    type HostPermissionSnapshot,
-} from "./lib/host-permissions"
+import { compressDisabledByOpencode, type HostPermissionSnapshot } from "./lib/host-permissions"
 import { Logger } from "./lib/logger"
 import { createSessionState } from "./lib/state"
 import { PromptStore } from "./lib/prompts/store"
@@ -59,6 +55,7 @@ const server: Plugin = (async (ctx) => {
             logger,
             config,
             prompts,
+            hostPermissions,
         ),
         "experimental.chat.messages.transform": createChatMessageTransformHandler(
             ctx.client,
@@ -87,21 +84,18 @@ const server: Plugin = (async (ctx) => {
             }),
         },
         config: async (opencodeConfig) => {
-            // ponytail: capture before the host-permission override so the warn
-            // log only fires on the transition from non-deny → deny (a pre-existing
-            // "deny" in user config is the user's choice, not an injection).
-            const previousPermission = config.compress.permission
-            if (
-                config.compress.permission !== "deny" &&
-                compressDisabledByOpencode(opencodeConfig.permission)
-            ) {
-                config.compress.permission = "deny"
-            }
-
-            if (config.compress.permission === "deny" && config.compress.permission !== previousPermission) {
+            // DPP-010: do NOT mutate the user's compress.permission. The host
+            // baseline may deny, but a user `allow` in dcp.jsonc must survive.
+            // Downstream gates read config.compress.permission directly, so the
+            // user's value is the single source of truth.
+            const hostDisables = compressDisabledByOpencode(opencodeConfig.permission)
+            if (hostDisables && config.compress.permission !== "deny") {
                 logger.warn(
-                    "DCP: compress disabled by host permission baseline (e.g. *:deny). Set explicit \"compress\": \"allow\" in opencode.json permission block to enable.",
-                    { resolvedPermission: config.compress.permission },
+                    'DCP: host permission baseline denies compress (e.g. *:deny). User explicit "compress": "allow" in dcp.jsonc re-enables it.',
+                    {
+                        hostPermission: opencodeConfig.permission,
+                        userPermission: config.compress.permission,
+                    },
                 )
             }
 
@@ -113,7 +107,8 @@ const server: Plugin = (async (ctx) => {
                 }
                 opencodeConfig.command["dcp"] = {
                     template: "",
-                    description: "DCP panel: /dcp stats, /dcp context, /dcp sweep, /dcp manual, ...",
+                    description:
+                        "DCP panel: /dcp stats, /dcp context, /dcp sweep, /dcp manual, ...",
                 }
             }
 
@@ -130,13 +125,17 @@ const server: Plugin = (async (ctx) => {
                 }
             }
 
-            if (!hasExplicitToolPermission(opencodeConfig.permission, "compress")) {
-                const permission = opencodeConfig.permission ?? {}
-                opencodeConfig.permission = {
-                    ...permission,
-                    compress: config.compress.permission,
-                } as typeof permission
-            }
+            // Re-append compress so the user's DCP permission is the last matching
+            // host rule without mutating config.compress.permission.
+            const permission = Object.fromEntries(
+                Object.entries(opencodeConfig.permission ?? {}).filter(
+                    ([tool]) => tool !== "compress",
+                ),
+            )
+            opencodeConfig.permission = {
+                ...permission,
+                compress: config.compress.permission,
+            } as typeof opencodeConfig.permission
 
             hostPermissions.global = opencodeConfig.permission
             hostPermissions.agents = Object.fromEntries(

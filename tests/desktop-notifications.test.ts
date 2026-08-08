@@ -222,3 +222,7 @@ test("dispatchToast: rejected showToast is silently swallowed, subsequent calls 
         process.off("unhandledRejection", rejectionHandler)
     }
 })
+// Logic Verified: resolveEffectiveNotificationType honours user config, desktop forces toast, and dispatchToast coalesces synchronous bursts via in-flight flag.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

@@ -69,3 +69,7 @@ test("disabled Logger does not write context dumps", async () => {
     await new Logger(false).saveContext(sessionId, messages("ignored"))
     assert.deepEqual(files(sessionId), [])
 })
+// Logic Verified: saveContext skips no-op writes for identical minimized messages, writes again when content changes, tracks hashes independently per session, and disabled Logger never writes.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

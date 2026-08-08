@@ -12,6 +12,7 @@ import {
     loadPruneMessagesState,
     loadPruneMap,
     collectTurnNudgeAnchors,
+    effectiveManualMode,
 } from "./utils"
 import { getLastUserMessage } from "../messages/query"
 
@@ -22,6 +23,7 @@ export const checkSession = async (
     messages: WithParts[],
     manualModeDefault: boolean,
     stateMaxAgeDays: number | null = null,
+    allowSubAgents: boolean = false,
 ): Promise<void> => {
     const lastUserMessage = getLastUserMessage(messages)
     if (!lastUserMessage) {
@@ -41,6 +43,7 @@ export const checkSession = async (
                 messages,
                 manualModeDefault,
                 stateMaxAgeDays,
+                allowSubAgents,
             )
         } catch (err: any) {
             logger.error("Failed to initialize session state", { error: err.message })
@@ -139,6 +142,11 @@ export function resetSessionState(state: SessionState): void {
         pruneTokenCounter: 0,
         totalPruneTokens: 0,
     }
+    // ponytail: clear compressionTiming so orphans (e.g. compress call started
+    // but never completed via crash / kill) do not leak across session
+    // boundaries inside a long-lived TUI / desktop sidecar process.
+    state.compressionTiming.startsByCallId.clear()
+    state.compressionTiming.pendingByCallId.clear()
     state.toolParameters.clear()
     state.subAgentResultCache.clear()
     state.toolIdList = []
@@ -166,6 +174,7 @@ export async function ensureSessionInitialized(
     messages: WithParts[],
     manualModeEnabled: boolean,
     stateMaxAgeDays: number | null = null,
+    allowSubAgents: boolean = false,
 ): Promise<void> {
     if (state.sessionId === sessionId) {
         return
@@ -182,6 +191,14 @@ export async function ensureSessionInitialized(
     const isSubAgent = await isSubAgentSession(client, sessionId)
     state.isSubAgent = isSubAgent
     // logger.info("isSubAgent = " + isSubAgent)
+
+    // BUG-054: only skip the persisted-state load when the session is a
+    // subagent AND the user has not opted in via experimental.allowSubAgents.
+    // The previous unconditional early-return wasted a disk read on every
+    // subagent session even when the user explicitly enabled DCP for them.
+    if (isSubAgent && !allowSubAgents) {
+        return
+    }
 
     state.lastCompaction = findLastCompactionTimestamp(messages)
     state.currentTurn = countTurns(state, messages)
@@ -205,21 +222,18 @@ export async function ensureSessionInitialized(
     // v2 fields: apply loaded values when present. The schema-version gate in
     // loadSessionState has already filtered out mismatched files, so anything
     // that reaches here is a valid v2 file.
+    //
+    // BUG-031: recoveryForced, nonCompactingRunCount, recoveryFadeCounter are
+    // intentionally NOT restored — they are session-local recovery protocol
+    // state that resets on every session load (see also docs/features/
+    // STATE_PERSISTENCE.md and the persistence-side fix in persistence.ts).
     if (typeof persisted.userForced === "boolean") {
         state.userForced = persisted.userForced
     }
-    if (typeof persisted.recoveryForced === "boolean") {
-        state.recoveryForced = persisted.recoveryForced
-    }
-    if (typeof persisted.nonCompactingRunCount === "number") {
-        state.nonCompactingRunCount = persisted.nonCompactingRunCount
-    }
-    if (typeof persisted.recoveryFadeCounter === "number") {
-        state.recoveryFadeCounter = persisted.recoveryFadeCounter
-    }
 
-    // Re-derive the manualMode cache from the now-merged flags.
-    state.manualMode = state.userForced || state.recoveryForced ? "active" : false
+    // Re-derive the manualMode cache from the now-merged flags via the
+    // canonical helper (DPP-017 / PAT-007).
+    state.manualMode = effectiveManualMode(state)
 
     state.prune.tools = loadPruneMap(persisted.prune.tools)
     state.prune.messages = loadPruneMessagesState(persisted.prune.messages)
@@ -256,6 +270,7 @@ export async function refreshManualMode(
     const enabled = persisted ?? manualModeDefault
     state.userForced = enabled
     // recoveryForced is preserved across refresh — only session end, restart, or
-    // a streak of good compresses clears it. manualMode is the derived cache.
-    state.manualMode = state.userForced || state.recoveryForced ? "active" : false
+    // a streak of good compresses clears it. manualMode is the derived cache;
+    // re-derive via the canonical helper (DPP-017 / PAT-007).
+    state.manualMode = effectiveManualMode(state)
 }

@@ -172,3 +172,7 @@ test("counting uses the compacted tool placeholder for completed outputs", () =>
     assert.equal(extractCompletedToolOutput(part), COMPACTED_TOOL_OUTPUT_PLACEHOLDER)
     assertCounted(part, [JSON.stringify(input), COMPACTED_TOOL_OUTPUT_PLACEHOLDER])
 })
+// Logic Verified: counting includes input for large built-in and errored custom tool calls, and uses the compacted placeholder for completed outputs.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

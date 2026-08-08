@@ -59,3 +59,7 @@ async function writePackageJson(dir: string, data: Record<string, unknown>) {
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, "package.json"), `${JSON.stringify(data)}\n`, "utf-8")
 }
+// Logic Verified: isVersionNewer compares semver, isAutoUpdatableSpec allows latest/ranges, and updateRemoveDir removes the opencode wrapper for latest installs while skipping version-locked ones.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

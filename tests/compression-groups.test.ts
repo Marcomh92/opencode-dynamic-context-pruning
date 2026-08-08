@@ -446,3 +446,7 @@ test("decompress keeps batched ranges individually restorable", async () => {
     assert.equal(blocks[1]?.active, true)
     assert.equal(blocks[1]?.deactivatedByUser, false)
 })
+// Logic Verified: compression notifications increment by tool call across range/message tools, and decompress keeps batched ranges individually restorable.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

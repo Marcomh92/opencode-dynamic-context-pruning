@@ -318,3 +318,7 @@ test("synthetic burn graph: deterministic output for given inputs", () => {
 
     assert.deepEqual(a, b)
 })
+// Logic Verified: synthetic burn reaches maxContextLimitRecovery within 3 runs, blocks further autonomous compress calls (prep refuses), keeps /dcp-compress available, and bad manual compress resets recoveryFadeCounter.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

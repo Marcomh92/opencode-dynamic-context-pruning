@@ -19,13 +19,7 @@ mkdirSync(testConfigHome, { recursive: true })
 const logger = new Logger(false)
 
 // Mirror the storage location layout used by lib/state/persistence.ts.
-const STORAGE_DIR = join(
-    process.env.XDG_DATA_HOME,
-    "opencode",
-    "storage",
-    "plugin",
-    "dcp",
-)
+const STORAGE_DIR = join(process.env.XDG_DATA_HOME, "opencode", "storage", "plugin", "dcp")
 
 function writeStateFile(sessionID: string, state: any): void {
     mkdirSync(STORAGE_DIR, { recursive: true })
@@ -184,3 +178,7 @@ test("loadSessionState returns null when required structural fields are missing"
 test("FORK_SCHEMA_VERSION is the current persisted-state shape version", () => {
     assert.equal(FORK_SCHEMA_VERSION, 3)
 })
+// Logic Verified: loadSessionState returns null for forkSchemaVersion 1/4/missing and returns state when it matches FORK_SCHEMA_VERSION (with default fields).
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

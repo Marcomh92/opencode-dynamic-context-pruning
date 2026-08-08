@@ -76,3 +76,7 @@ test("inactive grouped message runs no longer contribute compression time", () =
     assert.equal(targets.length, 1)
     assert.equal(totalDurationMs, 80)
 })
+// Logic Verified: active compression targets count a grouped message run once, and inactive runs no longer contribute compression time.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

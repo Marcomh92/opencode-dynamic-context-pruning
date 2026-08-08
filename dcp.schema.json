@@ -17,7 +17,7 @@
         },
         "autoUpdate": {
             "type": "boolean",
-            "default": true,
+            "default": false,
             "description": "Automatically update npm-installed DCP when a newer npm latest version is available. Version-locked plugin specs are not updated."
         },
         "debug": {
@@ -272,10 +272,7 @@
                     "description": "Persisted-state shape version. Bumped on any change to PersistedSessionState (v3 = #595 subagent cache shape). On load, mismatched state is dropped and a startup log line names the dropped version. See PLAN §6.3."
                 },
                 "stateMaxAgeDays": {
-                    "oneOf": [
-                        { "type": "number", "minimum": 0 },
-                        { "type": "null" }
-                    ],
+                    "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }],
                     "default": null,
                     "description": "Optional paranoia wall-clock window for state invalidation (days). null (default) means no expiry across schema versions. See PLAN §6.3."
                 }

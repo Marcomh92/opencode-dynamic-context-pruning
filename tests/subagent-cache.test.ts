@@ -8,7 +8,12 @@ import { appendProtectedTools } from "../lib/compress/protected-content"
 import { buildSubAgentCacheKey, olderWinsWrite } from "../lib/subagents/cache-key"
 import type { SearchContext, SelectionResolution } from "../lib/compress/types"
 import { Logger } from "../lib/logger"
-import { createSessionState, type CachedSubAgentResult, type SessionState, type WithParts } from "../lib/state"
+import {
+    createSessionState,
+    type CachedSubAgentResult,
+    type SessionState,
+    type WithParts,
+} from "../lib/state"
 import { injectExtendedSubAgentResults } from "../lib/messages/inject/subagent-results"
 
 // Per-test isolation: redirect XDG_DATA_HOME/XDG_CONFIG_HOME away from the
@@ -181,11 +186,7 @@ test("#595 cold-cache: protected-content path also falls back to state.output", 
     const selection: SelectionResolution = {
         startReference: { kind: "message", rawIndex: 1, messageId: "msg-parent-assistant-1" },
         endReference: { kind: "message", rawIndex: 3, messageId: "msg-parent-assistant-3" },
-        messageIds: [
-            "msg-parent-assistant-1",
-            "msg-parent-assistant-2",
-            "msg-parent-assistant-3",
-        ],
+        messageIds: ["msg-parent-assistant-1", "msg-parent-assistant-2", "msg-parent-assistant-3"],
         messageTokenById: new Map(),
         toolIds: ["call-round-1", "call-round-2", "call-round-3"],
         requiredBlockIds: [],
@@ -448,3 +449,7 @@ test("olderWinsWrite: returns existing when incoming.capturedAt is NaN (invalid)
     assert.equal(result.capturedAt, 100)
     assert.equal(result.text, "existing text")
 })
+// Logic Verified: subagent result cache cold path merges protected content, HIT path merges into part.state.output, composite keys prevent cross-session collisions, and olderWinsWrite returns incoming for tie/undefined.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

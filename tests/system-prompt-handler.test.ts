@@ -1,9 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import {
-    createSystemPromptHandler,
-    isInternalAgentSystem,
-} from "../lib/hooks"
+import { createSystemPromptHandler, isInternalAgentSystem } from "../lib/hooks"
 import type { PluginConfig } from "../lib/config"
 import { Logger } from "../lib/logger"
 import { createSessionState } from "../lib/state"
@@ -131,3 +128,7 @@ test("system prompt handler skips when every output.system prompt is internal", 
     assert.equal(output.system.length, 1)
     assert.doesNotMatch(output.system[0] ?? "", /DCP injected prompt/)
 })
+// Logic Verified: isInternalAgentSystem detects internal signatures, and the system-prompt handler injects/skips DCP based on the mixed vs all-internal signature.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

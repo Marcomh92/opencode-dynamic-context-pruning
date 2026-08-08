@@ -50,9 +50,13 @@ export const isIgnoredUserMessage = (message: WithParts): boolean => {
     }
 
     for (const part of parts) {
-        if (!(part as any).ignored) {
-            return false
+        if (part.type === "text") {
+            if (!part.ignored) {
+                return false
+            }
+            continue
         }
+        return false
     }
 
     return true

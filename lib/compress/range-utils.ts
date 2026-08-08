@@ -10,7 +10,9 @@ import type {
     SearchContext,
 } from "./types"
 
-const BLOCK_PLACEHOLDER_REGEX = /\(b(\d+)\)|\{block_(\d+)\}/gi
+// BUG-067: `[1-9]\d*` enforces INV-20 (block IDs ≥ 1); `b0`/`{block_0}`
+// never reach `parseInt`. The `i` flag is preserved so `{BLOCK_1}` still matches.
+const BLOCK_PLACEHOLDER_REGEX = /\(b([1-9]\d*)\)|\{block_([1-9]\d*)\}/gi
 
 /** Enumerate every boundary ID the agent can currently use as a start or end
  *  anchor in this session: every injected message ref + every active block ref.
@@ -48,11 +50,7 @@ export function isBoundaryIdValid(id: string, state: SessionState): boolean {
 
 /** Validate that startId and endId both resolve against the currently-visible
  *  message set. Throws with a valid-ID list (issue #573 acceptance criterion). */
-export function validateBoundaryIds(
-    startId: string,
-    endId: string,
-    state: SessionState,
-): void {
+export function validateBoundaryIds(startId: string, endId: string, state: SessionState): void {
     const issues: string[] = []
     if (!isBoundaryIdValid(startId, state)) {
         issues.push(
@@ -66,9 +64,7 @@ export function validateBoundaryIds(
     }
     if (issues.length > 0) {
         throw new Error(
-            issues.length === 1
-                ? issues[0]
-                : issues.map((issue) => `- ${issue}`).join("\n"),
+            issues.length === 1 ? issues[0] : issues.map((issue) => `- ${issue}`).join("\n"),
         )
     }
 }
@@ -83,7 +79,13 @@ export function validateMonotonicEnd(
     newEnd: string,
     state: SessionState,
 ): void {
-    const validNextIds = listValidBoundaryIds(state)
+    // BUG-075: filter hint to IDs strictly greater than `prevAnchorEnd` so the
+    // self-correction path doesn't list IDs that themselves fail the check.
+    // BUG-001: numeric-aware comparator (`b10 > b9`) — default lexicographic
+    // would reject `b9 → b10` because `'1' < '9'` at index 1.
+    const validNextIds = listValidBoundaryIds(state).filter(
+        (id) => id.localeCompare(prevAnchorEnd, undefined, { numeric: true }) > 0,
+    )
     const validNextHint =
         validNextIds.length > 0
             ? `Valid next anchors: ${validNextIds.join(", ")}`
@@ -96,15 +98,15 @@ export function validateMonotonicEnd(
         )
     }
 
-    if (newStart.localeCompare(prevAnchorEnd) <= 0) {
+    if (newStart.localeCompare(prevAnchorEnd, undefined, { numeric: true }) <= 0) {
         throw new Error(
-            `__DCP_MONOTONIC_VIOLATION__: new start ${newStart} must be strictly greater than previous end ${prevAnchorEnd}. ${validNextHint}`,
+            `__DCP_MONOTONIC_VIOLATION__: new start must be strictly greater than previous end. ${validNextHint}`,
         )
     }
 
-    if (newEnd.localeCompare(prevAnchorEnd) <= 0) {
+    if (newEnd.localeCompare(prevAnchorEnd, undefined, { numeric: true }) <= 0) {
         throw new Error(
-            `__DCP_MONOTONIC_VIOLATION__: new end ${newEnd} must be strictly greater than previous end ${prevAnchorEnd}. ${validNextHint}`,
+            `__DCP_MONOTONIC_VIOLATION__: new end must be strictly greater than previous end. ${validNextHint}`,
         )
     }
 }
@@ -378,8 +380,11 @@ function restoreSummary(summary: string): string {
 
     const afterHeader = summary.slice(headerMatch[0].length)
     const withoutLeadingBreaks = afterHeader.replace(/^(?:\r?\n)+/, "")
+    // ponytail: the wrap writes a full opening+closing <dcp-message-id> tag pair;
+    // the inverse must consume the whole tag (not just the closing fragment).
+    // BUG-039: the previous asymmetric regex left the opening tag artifact behind.
     return withoutLeadingBreaks
-        .replace(/(?:\r?\n)*<dcp-message-id>b\d+<\/dcp-message-id>\s*$/i, "")
+        .replace(/(?:\r?\n)*<dcp-message-id>[^<]*<\/dcp-message-id>\s*$/i, "")
         .replace(/(?:\r?\n)+$/, "")
 }
 

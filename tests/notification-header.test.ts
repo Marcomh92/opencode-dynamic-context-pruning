@@ -48,7 +48,11 @@ function config() {
     } as any
 }
 
-async function notify(state: ReturnType<typeof createSessionState>, blockId: number, runId: number) {
+async function notify(
+    state: ReturnType<typeof createSessionState>,
+    blockId: number,
+    runId: number,
+) {
     let text = ""
     const client = {
         session: {
@@ -115,7 +119,11 @@ test("sendCompressNotification sums compressedTokens across multiple entries", a
 
     let text = ""
     const client = {
-        session: { prompt: async (req: any) => { text = req.body.parts[0].text } },
+        session: {
+            prompt: async (req: any) => {
+                text = req.body.parts[0].text
+            },
+        },
     }
     const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Bun")
     Object.defineProperty(globalThis, "Bun", {
@@ -126,7 +134,11 @@ test("sendCompressNotification sums compressedTokens across multiple entries", a
     })
     try {
         await sendCompressNotification(
-            client, new Logger(false), config(), state, "ses_multi",
+            client,
+            new Logger(false),
+            config(),
+            state,
+            "ses_multi",
             [
                 { blockId: 1, runId: 5, summary: "a", summaryTokens: 3 },
                 { blockId: 2, runId: 5, summary: "b", summaryTokens: 3 },
@@ -152,7 +164,13 @@ test("sendCompressNotification returns false without dispatching when notificati
     state.prune.messages.blocksById.set(1, block(1, 1, 1_000))
     state.prune.messages.activeBlockIds.add(1)
     let called = false
-    const client = { session: { prompt: async () => { called = true } } }
+    const client = {
+        session: {
+            prompt: async () => {
+                called = true
+            },
+        },
+    }
     const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Bun")
     Object.defineProperty(globalThis, "Bun", {
         value: {},
@@ -162,10 +180,15 @@ test("sendCompressNotification returns false without dispatching when notificati
     })
     try {
         const result = await sendCompressNotification(
-            client, new Logger(false), { pruneNotification: "off" } as any,
-            state, "ses_off",
+            client,
+            new Logger(false),
+            { pruneNotification: "off" } as any,
+            state,
+            "ses_off",
             [{ blockId: 1, runId: 1, summary: "x", summaryTokens: 3 }],
-            undefined, ["msg-1"], {},
+            undefined,
+            ["msg-1"],
+            {},
         )
         assert.equal(result, false)
         assert.equal(called, false)
@@ -198,3 +221,7 @@ test("sendCompressNotification reports different deltas for consecutive compress
     assert.match(second, /▣ Compression #2 -7\.8K removed, \+3 summary/)
     assert.match(second, /→ Session total: 27\.8K removed/)
 })
+// Logic Verified: sendCompressNotification uses the block delta in headline and detail, sums compressedTokens across entries, returns false when off, and reports different deltas for consecutive compresses.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

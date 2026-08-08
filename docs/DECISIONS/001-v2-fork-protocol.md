@@ -15,19 +15,19 @@ The fork adds a small state machine on top of the upstream compress protocol.
 
 Add four fork-protocol fields to `CompressConfig`:
 
-| Field | Purpose |
-|---|---|
-| `maxCompactionRatio` | Lower bound for `summaryTokens / removedTokens` to count a run as "compacting". |
-| `maxContextLimitRecovery` | Number of consecutive non-compacting runs before `recoveryForced` is set. |
-| `recoveryFadeWindow` | Number of consecutive successful manual compresses required to clear `recoveryForced`. |
-| `forkSchemaVersion` | Schema version for the persisted state file. Bump on shape change. |
-| `stateMaxAgeDays` | Optional wall-clock age gate on persisted state. |
+| Field                     | Purpose                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| `maxCompactionRatio`      | Lower bound for `summaryTokens / removedTokens` to count a run as "compacting".        |
+| `maxContextLimitRecovery` | Number of consecutive non-compacting runs before `recoveryForced` is set.              |
+| `recoveryFadeWindow`      | Number of consecutive successful manual compresses required to clear `recoveryForced`. |
+| `forkSchemaVersion`       | Schema version for the persisted state file. Bump on shape change.                     |
+| `stateMaxAgeDays`         | Optional wall-clock age gate on persisted state.                                       |
 
 Add two boolean flags to `SessionState`:
 
-| Flag | Set by | Cleared by |
-|---|---|---|
-| `userForced` | `/dcp manual on`; successful manual compress | `/dcp manual off`; successful manual compress |
+| Flag             | Set by                                            | Cleared by                                                                          |
+| ---------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `userForced`     | `/dcp manual on`; successful manual compress      | `/dcp manual off`; successful manual compress                                       |
 | `recoveryForced` | `nonCompactingRunCount ≥ maxContextLimitRecovery` | session restart; `recoveryFadeCounter ≥ recoveryFadeWindow` after a manual compress |
 
 Derive `manualMode` as a cached value of `userForced || recoveryForced`. Add a transient `"compress-pending"` flag set only by the `/dcp-compress` slash command handler so the slash command can bypass the gate.
@@ -52,15 +52,15 @@ Negative:
 
 ## Compliance
 
-| Rule | Where enforced |
-|---|---|
-| Net-compaction guard | `lib/compress/pipeline.ts:142-172` |
-| Recovery fade counter | `lib/compress/pipeline.ts:178-189` |
-| `userForced` clearing | `lib/commands/manual.ts:64-75`, `lib/compress/pipeline.ts:132-134` |
-| Clamping | `clampRatio` / `clampMin1` / `clampNullOrNonNeg` in `lib/config.ts` |
-| Schema gate | `lib/state/persistence.ts:312-322` |
-| Age gate | `lib/state/persistence.ts:327-343` |
-| `compress-pending` single writer | `lib/commands/manual.ts` |
+| Rule                             | Where enforced                                                      |
+| -------------------------------- | ------------------------------------------------------------------- |
+| Net-compaction guard             | `lib/compress/pipeline.ts:142-172`                                  |
+| Recovery fade counter            | `lib/compress/pipeline.ts:178-189`                                  |
+| `userForced` clearing            | `lib/commands/manual.ts:64-75`, `lib/compress/pipeline.ts:132-134`  |
+| Clamping                         | `clampRatio` / `clampMin1` / `clampNullOrNonNeg` in `lib/config.ts` |
+| Schema gate                      | `lib/state/persistence.ts:312-322`                                  |
+| Age gate                         | `lib/state/persistence.ts:327-343`                                  |
+| `compress-pending` single writer | `lib/commands/manual.ts`                                            |
 
 ## Related
 

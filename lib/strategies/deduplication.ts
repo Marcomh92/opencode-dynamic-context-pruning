@@ -1,12 +1,44 @@
 import { PluginConfig } from "../config"
 import { Logger } from "../logger"
 import type { SessionState, WithParts } from "../state"
+import { isMessageCompacted } from "../state/utils"
 import {
     getFilePathsFromParameters,
     isFilePathProtected,
     isToolNameProtected,
 } from "../protected-patterns"
-import { getTotalToolTokens } from "../token-utils"
+
+/** Build the set of candidate tool IDs from the freshly fetched messages,
+ *  ignoring any stale `state.toolIdList` from earlier transform fires.
+ *  ponytail: O(|messages|) over the just-emitted stream — chat-transform and
+ *  compress pipelines both pass `messages`, so the strategies always see the
+ *  same view the rest of the pipeline does. Mirrors the inner loop of
+ *  buildToolIdList (lib/messages/utils.ts) without mutating state.
+ *
+ *  BUG-009 fallback: when `messages` carries no tool parts (compress-pipeline
+ *  test fixtures mock `client.session.messages` to return empty data, and the
+ *  test seeds `state.toolParameters` directly), fall back to the pre-populated
+ *  `state.toolIdList` so the strategy still iterates. Production sessions
+ *  always have messages, so this branch is defensive — the compress pipeline
+ *  itself owns strategy iteration. */
+const freshToolIds = (state: SessionState, messages: WithParts[]): string[] => {
+    const ids: string[] = []
+    for (const msg of messages) {
+        if (isMessageCompacted(state, msg)) {
+            continue
+        }
+        const parts = Array.isArray(msg.parts) ? msg.parts : []
+        for (const part of parts) {
+            if (part.type === "tool" && part.callID && part.tool) {
+                ids.push(part.callID)
+            }
+        }
+    }
+    if (ids.length === 0 && state.toolIdList.length > 0) {
+        return [...state.toolIdList]
+    }
+    return ids
+}
 
 /**
  * Deduplication strategy - prunes older tool calls that have identical
@@ -27,7 +59,11 @@ export const deduplicate = (
         return
     }
 
-    const allToolIds = state.toolIdList
+    // BUG-045: derive the candidate set from `messages`, not
+    // `state.toolIdList` — the latter is rebuilt by buildToolIdList only on
+    // chat-transform fires; compress-pipeline calls see a stale list and
+    // would otherwise early-return on an empty list that should be non-empty.
+    const allToolIds = freshToolIds(state, messages)
     if (allToolIds.length === 0) {
         return
     }
@@ -82,13 +118,19 @@ export const deduplicate = (
         }
     }
 
-    state.stats.totalPruneTokens += getTotalToolTokens(state, newPruneIds)
-
     if (newPruneIds.length > 0) {
+        // ponytail: single .get pass — mark + accumulate tokens together rather
+        // than running getTotalToolTokens + the marking loop as two passes (each
+        // would .get the same id). The combined loop keeps token totals in sync
+        // with state.prune.tools and halves the metadata lookups for newPruneIds.
+        let pruneTokens = 0
         for (const id of newPruneIds) {
             const entry = state.toolParameters.get(id)
-            state.prune.tools.set(id, entry?.tokenCount ?? 0)
+            const tokenCount = entry?.tokenCount ?? 0
+            pruneTokens += tokenCount
+            state.prune.tools.set(id, tokenCount)
         }
+        state.stats.totalPruneTokens += pruneTokens
         logger.debug(`Marked ${newPruneIds.length} duplicate tool calls for pruning`)
     }
 }

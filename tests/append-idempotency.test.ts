@@ -36,7 +36,14 @@ function toolPart(output: string): ToolPart {
         type: "tool",
         tool: "bash",
         callID: "call-append",
-        state: { status: "completed", input: {}, output, title: "bash", metadata: {}, time: { start: 0, end: 1 } },
+        state: {
+            status: "completed",
+            input: {},
+            output,
+            title: "bash",
+            metadata: {},
+            time: { start: 0, end: 1 },
+        },
     }
 }
 

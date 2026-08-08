@@ -67,10 +67,11 @@ export function applyPendingCompressionDurations(state: SessionState): number {
             entry.callId,
             entry.durationMs,
         )
-        if (applied > 0) {
-            updates += applied
-            state.compressionTiming.pendingByCallId.delete(key)
-        }
+        // ponytail: unconditional delete — one tick of durationMs writes may not
+        // land on a block (deactivated before completion), but the map must stay
+        // bounded. Symmetric with sibling startsByCallId which always evicts.
+        updates += applied
+        state.compressionTiming.pendingByCallId.delete(key)
     }
 
     return updates

@@ -19,9 +19,15 @@ export function configureClientAuth(client: any): any {
         return client
     }
 
-    // The SDK client has an internal client with request interceptors
-    // Access the underlying client to add the interceptor
-    const innerClient = client._client || client.client
+    // Secure-mode contract: depends on the OpenCode SDK exposing either
+    // `client._client` or `client.client` with an `interceptors.request`
+    // axios-style API. Both names have been observed in the SDK at different
+    // versions. Failure mode is silent — verify by header inspection on
+    // startup or with `curl -H 'Authorization: Basic ...' http://server/health`.
+    // ponytail: `??` over `||` — nullish coalescing is the precise intent
+    // (don't fall through on `0`/`""`/falsy); a future SDK change that
+    // leaves a sentinel value should still probe the alternate. BUG-070.
+    const innerClient = client._client ?? client.client
 
     if (innerClient?.interceptors?.request) {
         innerClient.interceptors.request.use((request: Request) => {
@@ -31,6 +37,13 @@ export function configureClientAuth(client: any): any {
             }
             return request
         })
+    } else {
+        // ponytail: best-effort — secure mode without the expected SDK shape
+        // means unauthenticated requests; one debug line is cheaper than
+        // silently broken auth.
+        if (process.env.DCP_DEBUG) {
+            console.debug("[dcp] configureClientAuth: no interceptable client found")
+        }
     }
 
     return client

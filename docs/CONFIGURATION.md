@@ -4,7 +4,7 @@ Configuration layering, defaults, and override semantics. The user-facing config
 
 ## Layered merge
 
-The plugin reads JSONC config from up to three sources and merges them in this order:
+The plugin reads JSONC config from up to four sources and merges them in this order:
 
 1. Built-in defaults (`lib/config.ts`).
 2. Global config (`$XDG_CONFIG_HOME/opencode/dcp.jsonc`).
@@ -17,13 +17,19 @@ The plugin reads JSONC config from up to three sources and merges them in this o
 
 ## Replace vs additive semantics
 
-| Key | Semantics | Rationale |
-|---|---|---|
-| `compress.protectedTools` | Replace per layer. `[]` means nothing protected. | An explicit `[]` is the user's choice; default-merge would surprise. |
-| `compress.protectedFilePatterns` | Additive per layer. | Pattern lists compose naturally; an empty list is harmless. |
-| Other arrays (e.g. `commands.something`) | See `mergeCompress` / `mergeStrategies` / `mergeCommands` ponytail comments in `lib/config.ts`. | Per-key; the comments are the spec. |
+| Key                                      | Semantics                                                                                       | Rationale                                                            |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `compress.protectedTools`                | Replace per layer. `[]` means nothing protected.                                                | An explicit `[]` is the user's choice; default-merge would surprise. |
+| `compress.protectedFilePatterns`         | Additive per layer.                                                                             | Pattern lists compose naturally; an empty list is harmless.          |
+| Other arrays (e.g. `commands.something`) | See `mergeCompress` / `mergeStrategies` / `mergeCommands` ponytail comments in `lib/config.ts`. | Per-key; the comments are the spec.                                  |
 
 The replace rule is the v2 fork's hard rule (`DPP-007`).
+
+## Pattern matching (case-sensitivity)
+
+`compress.protectedFilePatterns` and the tool-name patterns inside `compress.protectedTools` are evaluated by the custom glob matcher in `lib/protected-patterns.ts`. The matcher is **case-sensitive on every platform** — the underlying regex does not use the `i` flag. To match case-insensitively, list the patterns explicitly (e.g. `["*.md", "*.MD"]` for both `.md` and `.MD` suffixes).
+
+Note: on case-insensitive filesystems (Windows, default macOS HFS+/APFS), the _file system_ folds case, but the matcher does not. A pattern like `README.md` matches the literal string `README.md`, not `readme.md`.
 
 ## Validation
 
@@ -33,13 +39,13 @@ The replace rule is the v2 fork's hard rule (`DPP-007`).
 
 ## Runtime defaults
 
-| Key | Default | Source |
-|---|---|---|
-| `compress.mode` | `range` | `lib/config.ts` runtime defaults |
-| `compress.permission` | `allow` | `lib/config.ts` runtime defaults |
-| `compress.protectedTools` | `[]` | v2 fork; no default |
-| `autoUpdate` | `false` | `lib/config.ts` runtime defaults (note: `README.md` and `dcp.schema.json` still record `true`; this is a known docs drift) |
-| `state.maxAgeDays` | `null` (disabled) | `lib/config.ts` |
+| Key                        | Default           | Source                           |
+| -------------------------- | ----------------- | -------------------------------- |
+| `compress.mode`            | `range`           | `lib/config.ts` runtime defaults |
+| `compress.permission`      | `allow`           | `lib/config.ts` runtime defaults |
+| `compress.protectedTools`  | `[]`              | v2 fork; no default              |
+| `autoUpdate`               | `false`           | `lib/config.ts` runtime defaults |
+| `compress.stateMaxAgeDays` | `null` (disabled) | `lib/config.ts`                  |
 
 ## Override paths (prompts)
 

@@ -11,6 +11,11 @@ const PRUNED_TOOL_OUTPUT_REPLACEMENT =
 const PRUNED_TOOL_ERROR_INPUT_REPLACEMENT = "[input removed due to failed tool call]"
 const PRUNED_QUESTION_INPUT_REPLACEMENT = "[questions removed - see output for user's answers]"
 
+// ponytail: tool names whose outputs are not replaced by pruneToolOutputs.
+// Centralised so writers (compress state, sweep) and the read-side filter
+// agree. See known_issues/BUG-011-prune-blockmark-asymmetry.md.
+const PRUNED_OUTPUTS_UNSUPPORTED: ReadonlySet<string> = new Set(["question", "edit", "write"])
+
 export const prune = (
     state: SessionState,
     logger: Logger,
@@ -19,9 +24,24 @@ export const prune = (
 ): void => {
     filterCompressedRanges(state, logger, config, messages)
     // pruneFullTool(state, logger, messages)
+    dropUnsupportedPruneToolIds(state)
     pruneToolOutputs(state, logger, messages)
     pruneToolInputs(state, logger, messages)
     pruneToolErrors(state, logger, messages)
+}
+
+// ponytail: read-side guard for BUG-011. Removes sweep-marked callIDs whose
+// tool name is in PRUNED_OUTPUTS_UNSUPPORTED. The compress pipeline still
+// adds these IDs to state.prune.tools (mirrors upstream), but prune() now
+// removes them before the replacement loops run so state.prune.tools.has()
+// and the actual replacement agree. O(|prune.tools|).
+function dropUnsupportedPruneToolIds(state: SessionState): void {
+    for (const callId of [...state.prune.tools.keys()]) {
+        const entry = state.toolParameters.get(callId)
+        if (entry && PRUNED_OUTPUTS_UNSUPPORTED.has(entry.tool)) {
+            state.prune.tools.delete(callId)
+        }
+    }
 }
 
 const pruneFullTool = (state: SessionState, logger: Logger, messages: WithParts[]): void => {
@@ -210,9 +230,20 @@ const filterCompressedRanges = (
                         summaryLength: summaryContent.length,
                     })
                 } else {
-                    logger.warn("No user message found for compress summary", {
+                    // ponytail: rare scenario — every preceding non-ignored user
+                    // message is gone (e.g. subagent skipped user messages,
+                    // ignored reminder tags). Deactivate rather than leave a
+                    // dangling active block; next transforms won't retry.
+                    logger.warn("No user message found for compress summary; deactivating block", {
                         anchorMessageId: msgId,
+                        blockId,
                     })
+                    if (blockId !== undefined) {
+                        const block = state.prune.messages.blocksById.get(blockId)
+                        if (block) {
+                            block.active = false
+                        }
+                    }
                 }
             }
         }

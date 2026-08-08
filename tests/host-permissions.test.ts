@@ -102,3 +102,7 @@ test("explicit permission detection works without Object.hasOwn", () => {
         Object.hasOwn = originalHasOwn
     }
 })
+// Logic Verified: host opencode.json wildcard deny disables compress, later explicit allow overrides it, and pattern-specific denies do not disable the whole tool.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

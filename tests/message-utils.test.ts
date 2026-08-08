@@ -40,3 +40,7 @@ test("isIgnoredUserMessage only ignores user messages", () => {
     assert.equal(isIgnoredUserMessage(ignoredUserMessage), true)
     assert.equal(isIgnoredUserMessage(assistantMessage), false)
 })
+// Logic Verified: isIgnoredUserMessage only ignores user messages (assistant messages are never ignored).
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

@@ -42,9 +42,10 @@ export interface PersistedSessionState {
     manualMode?: boolean
     // v2 fork-protocol fields (issue #573 + #590).
     userForced?: boolean
-    recoveryForced?: boolean
-    nonCompactingRunCount?: number
-    recoveryFadeCounter?: number
+    // BUG-031: recoveryForced, nonCompactingRunCount, recoveryFadeCounter are
+    // intentionally NOT persisted — they are session-local recovery protocol
+    // state that resets on every session load. See lib/state/state.ts:208-211
+    // and docs/features/STATE_PERSISTENCE.md.
     forkSchemaVersion?: number
     prune: PersistedPrune
     nudges: PersistedNudges
@@ -52,19 +53,11 @@ export interface PersistedSessionState {
     lastUpdated: string
 }
 
-const STORAGE_DIR = join(
-    process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
-    "opencode",
-    "storage",
-    "plugin",
-    "dcp",
-)
-
 /** Resolve the storage directory at call-time so per-test XDG_DATA_HOME
  *  overrides (set after this module was first imported) take effect.
- *  ponytail: this exists because module-top-level `const STORAGE_DIR`
- *  captures process.env at first import; tests that mutate env mid-run
- *  need a fresh read. Add when no test framework can hijack import order. */
+ *  ponytail: per-call env read rather than module-top-level capture so
+ *  tests that mutate env mid-run see the new value. Add when no test
+ *  framework can hijack import order. */
 function resolveStorageDir(): string {
     return join(
         process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
@@ -127,9 +120,10 @@ export async function saveSessionState(
             // with older forks; v2 load validation uses forkSchemaVersion instead.
             manualMode: sessionState.manualMode === "active",
             userForced: sessionState.userForced,
-            recoveryForced: sessionState.recoveryForced,
-            nonCompactingRunCount: sessionState.nonCompactingRunCount,
-            recoveryFadeCounter: sessionState.recoveryFadeCounter,
+            // BUG-031: recoveryForced + streak counters are intentionally NOT
+            // persisted — they are session-local recovery protocol state that
+            // must reset on every session load (see lib/state/state.ts:208-211
+            // and docs/features/STATE_PERSISTENCE.md).
             forkSchemaVersion: sessionState.forkSchemaVersion,
             prune: {
                 tools: Object.fromEntries(sessionState.prune.tools),
@@ -324,11 +318,7 @@ export async function loadSessionState(
         // Optional wall-clock expiry gate (PLAN §6.3). null disables; the
         // age comparison is skipped on a missing or unparsable lastUpdated so
         // a malformed timestamp never silently invalidates a fresh session.
-        if (
-            maxAgeDays !== null &&
-            maxAgeDays >= 0 &&
-            typeof state.lastUpdated === "string"
-        ) {
+        if (maxAgeDays !== null && maxAgeDays >= 0 && typeof state.lastUpdated === "string") {
             const parsed = Date.parse(state.lastUpdated)
             if (Number.isFinite(parsed)) {
                 const ageDays = (Date.now() - parsed) / (1000 * 60 * 60 * 24)
@@ -368,8 +358,8 @@ function emptyPersistedState(manualMode: boolean): PersistedSessionState {
     return {
         manualMode,
         userForced: manualMode,
-        recoveryForced: false,
-        nonCompactingRunCount: 0,
+        // BUG-031: recoveryForced + streak counters intentionally absent —
+        // session-local recovery protocol state, never persisted.
         forkSchemaVersion: FORK_SCHEMA_VERSION,
         prune: {
             tools: {},
@@ -399,9 +389,28 @@ export async function loadManualModeSetting(
     sessionId: string,
     logger: Logger,
 ): Promise<boolean | undefined> {
-    // manualMode is a derived flag — age doesn't apply. Skip the wall-clock gate.
-    const state = await loadSessionState(sessionId, logger, null)
-    return typeof state?.manualMode === "boolean" ? state.manualMode : undefined
+    // BUG-053 — user-driven manual toggle skips the schema gate. The file
+    // shape is known (the save path produced it, or it is a v1-shaped file
+    // from an older fork); the schema gate exists to protect the hot
+    // transform path, not a user-driven toggle. manualMode is also
+    // age-insensitive.
+    const state = await loadSessionStateRaw(sessionId, logger)
+    if (!state) return undefined
+    // v2 protocol: gated on the file carrying the CURRENT forkSchemaVersion.
+    // Anything else (v1 shape with no forkSchemaVersion, or a mismatched
+    // older-fork version) falls back to the legacy `manualMode` boolean —
+    // backward-compatible. The discriminator used to be "presence of
+    // userForced", but a v1-shape file can co-exist with v2 field defaults
+    // in test fixtures and on disk after a partial write; the schema
+    // version is the only unambiguous marker of a current-format file.
+    if (state.forkSchemaVersion === FORK_SCHEMA_VERSION && typeof state.userForced === "boolean") {
+        // BUG-007 / BUG-030: read the same expression
+        // `effectiveManualMode(state)` reads from in-memory state.
+        // BUG-031: recoveryForced is session-local and is never persisted,
+        // so the OR clause degrades to `false` for fresh-loaded state.
+        return state.userForced === true
+    }
+    return typeof state.manualMode === "boolean" ? state.manualMode : undefined
 }
 
 export async function saveManualModeSetting(
@@ -409,12 +418,55 @@ export async function saveManualModeSetting(
     manualMode: boolean,
     logger: Logger,
 ): Promise<void> {
-    // Same: age doesn't apply to a write-only path; null disables the gate.
-    const existing = await loadSessionState(sessionId, logger, null)
+    // BUG-053 — skip the schema gate when reading existing state. The save
+    // path always overwrites manualMode / userForced / forkSchemaVersion,
+    // so an older-fork (mismatched) file is still safe to merge into; if
+    // no file exists, fall back to emptyPersistedState (which carries the
+    // current forkSchemaVersion). Age gate is also skipped (null) — the
+    // gate exists for the transform path, not for a write.
+    const existing = await loadSessionStateRaw(sessionId, logger)
     const state = existing ?? emptyPersistedState(manualMode)
     state.manualMode = manualMode
+    // BUG-007: persist `userForced` in lockstep with the manualMode boolean
+    // so a reload via loadManualModeSetting recovers the user's intent.
+    // ponytail: the userForced write is one assignment. Without it, an
+    // `/dcp manual on` followed by `/dcp manual off` would leave a stale
+    // `userForced: true` on disk and silently revert on the next reload.
+    state.userForced = manualMode
+    // BUG-053 — promote forkSchemaVersion on save. Reading via the raw
+    // path means an older-fork file can survive into the write below; this
+    // assignment rewrites it to the current version so the next transform
+    // load (which DOES run the gate) sees a matching version.
+    state.forkSchemaVersion = FORK_SCHEMA_VERSION
     state.lastUpdated = new Date().toISOString()
     await writePersistedSessionState(sessionId, state, logger)
+}
+
+/** BUG-053 — minimal raw read used by user-driven manual-mode helpers.
+ *  Skips the schema-version gate and the structural-validation pass: the
+ *  user-driven caller (a `/dcp manual on/off` toggle, or a TUI panel click)
+ *  knows the file shape (the save path produced it), and the schema gate's
+ *  job is to protect the hot transform path — not a user-driven toggle.
+ *  Just `existsSync` + `readFile` + `JSON.parse`. Returns null on a missing
+ *  file or a malformed parse; never throws. */
+export async function loadSessionStateRaw(
+    sessionId: string,
+    logger: Logger,
+): Promise<PersistedSessionState | null> {
+    try {
+        const filePath = getSessionFilePath(sessionId)
+        if (!existsSync(filePath)) {
+            return null
+        }
+        const content = await fs.readFile(filePath, "utf-8")
+        return JSON.parse(content) as PersistedSessionState
+    } catch (error: any) {
+        logger.warn("Failed to read raw session state", {
+            sessionId,
+            error: error?.message,
+        })
+        return null
+    }
 }
 
 export interface AggregatedStats {

@@ -175,8 +175,10 @@ export function estimateMessageBytes(messages: WithParts[]): number {
                 if (sp) {
                     if (typeof sp.input === "string") total += sp.input.length
                     if (typeof sp.output === "string") total += sp.output.length
-                    if (sp.input && typeof sp.input === "object") total += JSON.stringify(sp.input).length
-                    if (sp.output && typeof sp.output === "object") total += JSON.stringify(sp.output).length
+                    if (sp.input && typeof sp.input === "object")
+                        total += JSON.stringify(sp.input).length
+                    if (sp.output && typeof sp.output === "object")
+                        total += JSON.stringify(sp.output).length
                     if (sp.metadata) total += JSON.stringify(sp.metadata).length
                 }
             }
@@ -206,7 +208,9 @@ export interface DiagnosticEvent {
 }
 
 export function buildDiagnosticEvent(
-    state: { diagnostic?: { fireCount: number; lastPrefixHash: string | null; lastFireAt: number | null } },
+    state: {
+        diagnostic?: { fireCount: number; lastPrefixHash: string | null; lastFireAt: number | null }
+    },
     sessionId: string | null,
     messages: WithParts[],
     now: number,

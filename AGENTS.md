@@ -20,12 +20,12 @@ Fork note: this fork adds a v2 fork-protocol layer on top of upstream DCP (see `
 
 You MUST read these files in EXACT order:
 
-| #  | File                        | Purpose                        |
-|----|-----------------------------|--------------------------------|
-| 1  | `docs/MASTER.md`            | System overview and doc index  |
-| 2  | `docs/DESIGN_PRINCIPLES.md` | Core architectural principles  |
-| 3  | `docs/ARCHITECTURE.md`      | Layer responsibilities         |
-| 4  | `docs/PATTERNS.md`          | Code patterns and standards    |
+| #   | File                        | Purpose                       |
+| --- | --------------------------- | ----------------------------- |
+| 1   | `docs/MASTER.md`            | System overview and doc index |
+| 2   | `docs/DESIGN_PRINCIPLES.md` | Core architectural principles |
+| 3   | `docs/ARCHITECTURE.md`      | Layer responsibilities        |
+| 4   | `docs/PATTERNS.md`          | Code patterns and standards   |
 
 After completing the core files above, **discover and read** all remaining documentation relevant to your task:
 
@@ -37,15 +37,15 @@ After completing the core files above, **discover and read** all remaining docum
 
 ## Commands
 
-| Task | Command |
-|------|---------|
-| Build | `npm run build` (tsup + emit types) |
-| Typecheck | `npm run typecheck` |
-| Test | `npm test` (node `--test` runner over `tests/*.test.ts`) |
-| Format | `npm run format` / `npm run format:check` |
-| Package verify | `npm run check:package` |
-| Dev loop | `npm run dev` (opencode plugin dev) |
-| Print config | `npm run dcp` |
+| Task           | Command                                                  |
+| -------------- | -------------------------------------------------------- |
+| Build          | `npm run build` (tsup + emit types)                      |
+| Typecheck      | `npm run typecheck`                                      |
+| Test           | `npm test` (node `--test` runner over `tests/*.test.ts`) |
+| Format         | `npm run format` / `npm run format:check`                |
+| Package verify | `npm run check:package`                                  |
+| Dev loop       | `npm run dev` (opencode plugin dev)                      |
+| Print config   | `npm run dcp`                                            |
 
 ## Layout
 
@@ -118,7 +118,7 @@ Bug reports live in `known_issues/`.
 
 Gitnexus can be used to get a deep architectural view of the codebase so you are less likely to miss dependencies, break call chains, and ship blind edits.
 
-This project is indexed by GitNexus as repo **opencode-dynamic-context-pruning**. All gitnexus_* tools are MCP tool calls — invoke them directly, **never** via the bash tool. Always pass `repo: "opencode-dynamic-context-pruning"` explicitly.
+This project is indexed by GitNexus as repo **opencode-dynamic-context-pruning**. All gitnexus\_\* tools are MCP tool calls — invoke them directly, **never** via the bash tool. Always pass `repo: "opencode-dynamic-context-pruning"` explicitly.
 
 #### Index maintenance (escape hatch — only when needed)
 
@@ -137,7 +137,7 @@ Skip this step if `project overview` returns current results.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
 - When exploring unfamiliar code, use `gitnexus_query({query: "concept", repo: "opencode-dynamic-context-pruning"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
 - When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName", repo: "opencode-dynamic-context-pruning"})`.
-- **MUST pass `repo: "opencode-dynamic-context-pruning"` in every gitnexus_* tool call** — the parameter is technically optional with one indexed repo, but omitting it produces errors in this environment.
+- **MUST pass `repo: "opencode-dynamic-context-pruning"` in every gitnexus\_\* tool call** — the parameter is technically optional with one indexed repo, but omitting it produces errors in this environment.
 
 ### Never Do
 
@@ -145,33 +145,38 @@ Skip this step if `project overview` returns current results.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
 - NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
 - NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-- NEVER invoke gitnexus_* tools via the bash tool — they are MCP tools. The single bash exception is `gitnexus analyze` for rebuilding a stale index.
+- NEVER invoke gitnexus\_\* tools via the bash tool — they are MCP tools. The single bash exception is `gitnexus analyze` for rebuilding a stale index.
 
 ### Quick Reference
 
 > Every example below includes `repo: "opencode-dynamic-context-pruning"`. Do not omit it.
 
 #### Discover Repositories
+
 ```
 gitnexus_list_repos()
 ```
 
 #### Codebase Overview & Staleness Check
+
 ```
 gitnexus_query({query: "project overview", repo: "opencode-dynamic-context-pruning"})
 ```
 
 #### Functional Areas (Clusters)
+
 ```
 gitnexus_cypher({query: "MATCH (c:Community) RETURN c.heuristicLabel, c.symbolCount, c.cohesion ORDER BY c.symbolCount DESC", repo: "opencode-dynamic-context-pruning"})
 ```
 
 #### Execution Flows (Processes)
+
 ```
 gitnexus_cypher({query: "MATCH (p:Process) RETURN p.heuristicLabel, p.stepCount, p.processType ORDER BY p.stepCount DESC", repo: "opencode-dynamic-context-pruning"})
 ```
 
 #### Step-by-Step Execution Trace
+
 ```
 gitnexus_cypher({query: "MATCH (s)-[r:CodeRelation {type: 'STEP_IN_PROCESS'}]->(p:Process) WHERE p.heuristicLabel = 'ProcessName' RETURN s.name, r.step ORDER BY r.step", repo: "opencode-dynamic-context-pruning"})
 ```

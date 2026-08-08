@@ -76,6 +76,13 @@ export interface Prune {
 export interface PendingManualTrigger {
     sessionId: string
     prompt: string
+    /** Raw message id of the user message where the slash command was issued.
+     *  Set by the slash-command handler and used by `applyPendingManualTrigger`
+     *  to identify which user message the rewrite must target. Optional for
+     *  backward compat with the slash-command path that does not yet provide
+     *  it; when present, the trigger attaches to that exact message instead of
+     *  "the latest non-ignored user message" (BUG-029 race window). */
+    commandMessageId?: string
 }
 
 export interface MessageIdState {

@@ -6,21 +6,21 @@ Performance budgets and trade-offs. The plugin is on the hot path of every LLM c
 
 The hot path is `experimental.chat.messages.transform`. It runs once per LLM call. The work is O(n) over the visible message stream where n is the number of messages after OpenCode's own filtering.
 
-| Phase | Order | Complexity |
-|---|---|---|
-| `stripHallucinations` | 1 | O(total text bytes) |
-| `cacheSystemPromptTokens` | 2 | O(1) |
-| `assignMessageRefs` | 3 | O(n) |
-| `syncCompressionBlocks` | 4 | O(active blocks) |
-| `syncToolCache` | 5 | O(n) |
-| `buildToolIdList` | 6 | O(n) |
-| `prune` | 7 | O(n × parts per message) |
-| `injectExtendedSubAgentResults` | 8 | O(subagent cache hits) |
-| `buildPriorityMap` | 9 | O(n) (message mode only) |
-| `injectCompressNudges` | 10 | O(n) |
-| `injectMessageIds` | 11 | O(n) |
-| `applyPendingManualTrigger` | 12 | O(1) |
-| `stripStaleMetadata` | 13 | O(n) |
+| Phase                           | Order | Complexity               |
+| ------------------------------- | ----- | ------------------------ |
+| `stripHallucinations`           | 1     | O(total text bytes)      |
+| `cacheSystemPromptTokens`       | 2     | O(1)                     |
+| `assignMessageRefs`             | 3     | O(n)                     |
+| `syncCompressionBlocks`         | 4     | O(active blocks)         |
+| `syncToolCache`                 | 5     | O(n)                     |
+| `buildToolIdList`               | 6     | O(n)                     |
+| `prune`                         | 7     | O(n × parts per message) |
+| `injectExtendedSubAgentResults` | 8     | O(subagent cache hits)   |
+| `buildPriorityMap`              | 9     | O(n) (message mode only) |
+| `injectCompressNudges`          | 10    | O(n)                     |
+| `injectMessageIds`              | 11    | O(n)                     |
+| `applyPendingManualTrigger`     | 12    | O(1)                     |
+| `stripStaleMetadata`            | 13    | O(n)                     |
 
 ## Cache-aware trade-off (PER-001)
 
@@ -66,14 +66,14 @@ The full suite (32 files / 198 tests) completes in ~4.3 s on the test machine. `
 
 ## Budgets (PER-008)
 
-| Surface | Budget |
-|---|---|
+| Surface                         | Budget                                               |
+| ------------------------------- | ---------------------------------------------------- |
 | `messages.transform` wall-clock | No published budget; fast enough to not be observed. |
-| `compress` tool wall-clock | No published budget; one-shot per call. |
-| Persistence write | One per microtask per session. |
-| Persistence coalescer key | One coalescer per session ID. |
-| Schema-version gate | One integer compare per load. |
-| Age gate | One wall-clock compare per load when enabled. |
+| `compress` tool wall-clock      | No published budget; one-shot per call.              |
+| Persistence write               | One per microtask per session.                       |
+| Persistence coalescer key       | One coalescer per session ID.                        |
+| Schema-version gate             | One integer compare per load.                        |
+| Age gate                        | One wall-clock compare per load when enabled.        |
 
 ## What is not budgeted
 

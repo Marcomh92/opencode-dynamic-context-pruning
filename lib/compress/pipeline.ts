@@ -39,10 +39,10 @@ export interface PreparedSession {
     searchContext: SearchContext
 }
 
-/** Effective manual-mode cache for the v2 protocol.
+/** Canonical effective manual-mode helper for the v2 protocol.
  *  Returns "active" iff userForced || recoveryForced. The legacy `manualMode`
  *  tri-state field on SessionState is kept in sync by refreshManualMode and
- *  the compress pipeline; this helper is the canonical read for new code paths. */
+ *  the compress pipeline. */
 export function effectiveManualMode(state: SessionState): "active" | false {
     return state.userForced || state.recoveryForced ? "active" : false
 }
@@ -87,12 +87,30 @@ export async function prepareSession(
         rawMessages,
         ctx.config.manualMode.enabled,
         ctx.config.compress.stateMaxAgeDays,
+        ctx.config.experimental.allowSubAgents,
     )
 
     assignMessageRefs(ctx.state, rawMessages)
 
-    deduplicate(ctx.state, ctx.logger, ctx.config, rawMessages)
-    purgeErrors(ctx.state, ctx.logger, ctx.config, rawMessages)
+    // ponytail: per-strategy try/catch so one buggy strategy does not abort the
+    // whole compress. Strategies are still load-bearing for prune marks; if a
+    // strategy throws we log and continue rather than killing the compress.
+    try {
+        deduplicate(ctx.state, ctx.logger, ctx.config, rawMessages)
+    } catch (err: any) {
+        ctx.logger.warn("deduplicate strategy threw; continuing without dedupe marks", {
+            sessionId: toolCtx.sessionID,
+            error: err?.message ?? String(err),
+        })
+    }
+    try {
+        purgeErrors(ctx.state, ctx.logger, ctx.config, rawMessages)
+    } catch (err: any) {
+        ctx.logger.warn("purgeErrors strategy threw; continuing without purge marks", {
+            sessionId: toolCtx.sessionID,
+            error: err?.message ?? String(err),
+        })
+    }
 
     return {
         rawMessages,
@@ -149,14 +167,11 @@ export async function finalizeSession(
             ctx.state.nonCompactingRunCount >= maxContextLimitRecovery
         ) {
             ctx.state.recoveryForced = true
-            ctx.logger.warn(
-                "Compress recovery-forced: too many non-compacting runs in a row",
-                {
-                    sessionId: toolCtx.sessionID,
-                    nonCompactingRunCount: ctx.state.nonCompactingRunCount,
-                    threshold: maxContextLimitRecovery,
-                },
-            )
+            ctx.logger.warn("Compress recovery-forced: too many non-compacting runs in a row", {
+                sessionId: toolCtx.sessionID,
+                nonCompactingRunCount: ctx.state.nonCompactingRunCount,
+                threshold: maxContextLimitRecovery,
+            })
             try {
                 ctx.client?.tui?.showToast?.({
                     body: {

@@ -142,3 +142,7 @@ test("config-merge: no user override yields empty arrays (no hidden defaults)", 
         "purgeErrors.protectedTools must be empty without user override",
     )
 })
+// Logic Verified: user `protectedTools: []` yields an empty effective config (replace-semantics, no hidden defaults).
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

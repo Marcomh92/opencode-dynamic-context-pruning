@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto"
+import type { PluginConfig } from "../config"
 import type { SessionState, WithParts } from "../state"
 import { isMessageCompacted } from "../state/utils"
+import { isToolNameProtected } from "../protected-patterns"
 import type { UserMessage } from "@opencode-ai/sdk/v2"
 
 const SUMMARY_ID_HASH_LENGTH = 16
@@ -161,19 +163,30 @@ export const hasContent = (message: WithParts): boolean => {
     )
 }
 
-export function buildToolIdList(state: SessionState, messages: WithParts[]): string[] {
+// ponytail: returns tool IDs filtered by `config.compress.protectedTools`
+// when `config` is provided — callers that pass config see only prunable IDs.
+// When `config` is omitted the function preserves the legacy raw-view
+// contract (no protected-tools filter at the source); the existing
+// pre-`config` callers continue to behave as before. Consumers that need
+// protected-tool filtering at read time already do their own re-filter
+// via `isToolNameProtected` — duplicating that here keeps each call site
+// honest about which view of "prunable tools" it wants.
+export function buildToolIdList(
+    state: SessionState,
+    messages: WithParts[],
+    config?: PluginConfig,
+): string[] {
+    const protectedTools = config?.compress.protectedTools ?? []
     const toolIds: string[] = []
     for (const msg of messages) {
         if (isMessageCompacted(state, msg)) {
             continue
         }
         const parts = Array.isArray(msg.parts) ? msg.parts : []
-        if (parts.length > 0) {
-            for (const part of parts) {
-                if (part.type === "tool" && part.callID && part.tool) {
-                    toolIds.push(part.callID)
-                }
-            }
+        for (const part of parts) {
+            if (part.type !== "tool" || !part.callID || !part.tool) continue
+            if (isToolNameProtected(part.tool, protectedTools)) continue
+            toolIds.push(part.callID)
         }
     }
     state.toolIdList = toolIds

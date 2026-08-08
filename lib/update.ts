@@ -40,7 +40,15 @@ export function startAutoUpdate(ctx: PluginInput, enabled: boolean): void {
                 })
             }, 5000)
         })
-        .catch(() => {})
+        .catch((err) => {
+            // ponytail: best-effort — network/proxy failures shouldn't surface,
+            // but a silent swallow makes "why didn't auto-update happen?" a
+            // 30-min debugging session. One debug line when debug is on.
+            // BUG-071.
+            if (process.env.DCP_DEBUG) {
+                console.debug("[dcp] auto-update failed:", String(err))
+            }
+        })
         .finally(() => clearTimeout(timeout))
 }
 
@@ -145,7 +153,13 @@ async function fetchLatestVersion(name: string, signal: AbortSignal) {
         if (!data || typeof data !== "object") return undefined
         const version = (data as { version?: unknown }).version
         return typeof version === "string" ? version : undefined
-    } catch {
+    } catch (err) {
+        // ponytail: best-effort — surface the failure so offline / proxied
+        // users can see "why didn't auto-update happen?" without 30 minutes of
+        // debugging. BUG-071.
+        if (process.env.DCP_DEBUG) {
+            console.debug("[dcp] auto-update: failed to fetch latest version:", String(err))
+        }
         return undefined
     }
 }

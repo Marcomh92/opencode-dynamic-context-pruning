@@ -8,9 +8,15 @@ import { handleDecompressCommand } from "../lib/commands/decompress"
 import { handleRecompressCommand } from "../lib/commands/recompress"
 import { Logger } from "../lib/logger"
 import { prune } from "../lib/messages/prune"
-import { createSessionState, syncPruneToolsFromActiveBlocks, type SessionState, type WithParts } from "../lib/state"
+import {
+    createSessionState,
+    syncPruneToolsFromActiveBlocks,
+    type SessionState,
+    type WithParts,
+} from "../lib/state"
 
-const PRUNED_PLACEHOLDER = "[Output removed to save context - information superseded or no longer needed]"
+const PRUNED_PLACEHOLDER =
+    "[Output removed to save context - information superseded or no longer needed]"
 
 // Per-test isolation: redirect XDG_DATA_HOME / XDG_CONFIG_HOME so the
 // persistence layer and the logger never touch the host filesystem.
@@ -33,10 +39,17 @@ function buildConfig() {
         experimental: { allowSubAgents: false, customPrompts: false },
         protectedFilePatterns: [],
         compress: {
-            mode: "range", permission: "allow", showCompression: false,
-            maxContextLimit: 150000, minContextLimit: 50000, nudgeFrequency: 5,
-            iterationNudgeThreshold: 15, nudgeForce: "soft", protectedTools: [],
-            protectTags: false, protectUserMessages: false,
+            mode: "range",
+            permission: "allow",
+            showCompression: false,
+            maxContextLimit: 150000,
+            minContextLimit: 50000,
+            nudgeFrequency: 5,
+            iterationNudgeThreshold: 15,
+            nudgeForce: "soft",
+            protectedTools: [],
+            protectTags: false,
+            protectUserMessages: false,
         },
         strategies: {
             deduplication: { enabled: true, protectedTools: [] },
@@ -61,24 +74,48 @@ test("syncPruneToolsFromActiveBlocks: keeps tool IDs from active blocks, drops t
 
     // Seed two active blocks; the second references toolB, the first toolA.
     state.prune.messages.blocksById.set(1, {
-        blockId: 1, runId: 1, active: true, deactivatedByUser: false,
-        compressedTokens: 0, summaryTokens: 0,
-        topic: "block1", startId: "m0001", endId: "m0002",
-        anchorMessageId: "m0002", compressMessageId: "msg-origin-1",
-        includedBlockIds: [], consumedBlockIds: [], parentBlockIds: [],
-        directMessageIds: ["m0001", "m0002"], directToolIds: ["toolA"],
-        effectiveMessageIds: ["m0001", "m0002"], effectiveToolIds: ["toolA"],
-        createdAt: 1, summary: "",
+        blockId: 1,
+        runId: 1,
+        active: true,
+        deactivatedByUser: false,
+        compressedTokens: 0,
+        summaryTokens: 0,
+        topic: "block1",
+        startId: "m0001",
+        endId: "m0002",
+        anchorMessageId: "m0002",
+        compressMessageId: "msg-origin-1",
+        includedBlockIds: [],
+        consumedBlockIds: [],
+        parentBlockIds: [],
+        directMessageIds: ["m0001", "m0002"],
+        directToolIds: ["toolA"],
+        effectiveMessageIds: ["m0001", "m0002"],
+        effectiveToolIds: ["toolA"],
+        createdAt: 1,
+        summary: "",
     } as any)
     state.prune.messages.blocksById.set(2, {
-        blockId: 2, runId: 2, active: true, deactivatedByUser: false,
-        compressedTokens: 0, summaryTokens: 0,
-        topic: "block2", startId: "m0003", endId: "m0004",
-        anchorMessageId: "m0004", compressMessageId: "msg-origin-2",
-        includedBlockIds: [], consumedBlockIds: [], parentBlockIds: [],
-        directMessageIds: ["m0003", "m0004"], directToolIds: ["toolB"],
-        effectiveMessageIds: ["m0003", "m0004"], effectiveToolIds: ["toolB"],
-        createdAt: 2, summary: "",
+        blockId: 2,
+        runId: 2,
+        active: true,
+        deactivatedByUser: false,
+        compressedTokens: 0,
+        summaryTokens: 0,
+        topic: "block2",
+        startId: "m0003",
+        endId: "m0004",
+        anchorMessageId: "m0004",
+        compressMessageId: "msg-origin-2",
+        includedBlockIds: [],
+        consumedBlockIds: [],
+        parentBlockIds: [],
+        directMessageIds: ["m0003", "m0004"],
+        directToolIds: ["toolB"],
+        effectiveMessageIds: ["m0003", "m0004"],
+        effectiveToolIds: ["toolB"],
+        createdAt: 2,
+        summary: "",
     } as any)
     state.prune.messages.activeBlockIds.add(1)
     state.prune.messages.activeBlockIds.add(2)
@@ -89,28 +126,47 @@ test("syncPruneToolsFromActiveBlocks: keeps tool IDs from active blocks, drops t
     state.prune.tools.set("stale-sweep-tool", 30)
     state.toolParameters.set("toolA", { tool: "bash", parameters: {}, turn: 1, tokenCount: 10 })
     state.toolParameters.set("toolB", { tool: "bash", parameters: {}, turn: 2, tokenCount: 20 })
-    state.toolParameters.set("stale-sweep-tool", { tool: "bash", parameters: {}, turn: 0, tokenCount: 30 })
+    state.toolParameters.set("stale-sweep-tool", {
+        tool: "bash",
+        parameters: {},
+        turn: 0,
+        tokenCount: 30,
+    })
 
     syncPruneToolsFromActiveBlocks(state)
 
     assert.ok(state.prune.tools.has("toolA"), "block1 tool stays")
     assert.ok(state.prune.tools.has("toolB"), "block2 tool stays")
     // Sweep-marked tool that's not in any active block is wiped.
-    assert.ok(!state.prune.tools.has("stale-sweep-tool"),
-        "sweep-marked tool not in any active block must be wiped (intentional — see helper comment)")
+    assert.ok(
+        !state.prune.tools.has("stale-sweep-tool"),
+        "sweep-marked tool not in any active block must be wiped (intentional — see helper comment)",
+    )
 })
 
 test("syncPruneToolsFromActiveBlocks: deactivating a block drops its tool ID when no other active block references it", () => {
     const state = createSessionState()
     state.prune.messages.blocksById.set(1, {
-        blockId: 1, runId: 1, active: true, deactivatedByUser: false,
-        compressedTokens: 0, summaryTokens: 0,
-        topic: "block1", startId: "m0001", endId: "m0002",
-        anchorMessageId: "m0002", compressMessageId: "msg-origin-1",
-        includedBlockIds: [], consumedBlockIds: [], parentBlockIds: [],
-        directMessageIds: ["m0001", "m0002"], directToolIds: ["toolA"],
-        effectiveMessageIds: ["m0001", "m0002"], effectiveToolIds: ["toolA"],
-        createdAt: 1, summary: "",
+        blockId: 1,
+        runId: 1,
+        active: true,
+        deactivatedByUser: false,
+        compressedTokens: 0,
+        summaryTokens: 0,
+        topic: "block1",
+        startId: "m0001",
+        endId: "m0002",
+        anchorMessageId: "m0002",
+        compressMessageId: "msg-origin-1",
+        includedBlockIds: [],
+        consumedBlockIds: [],
+        parentBlockIds: [],
+        directMessageIds: ["m0001", "m0002"],
+        directToolIds: ["toolA"],
+        effectiveMessageIds: ["m0001", "m0002"],
+        effectiveToolIds: ["toolA"],
+        createdAt: 1,
+        summary: "",
     } as any)
     state.prune.messages.activeBlockIds.add(1)
     state.prune.tools.set("toolA", 10)
@@ -124,20 +180,35 @@ test("syncPruneToolsFromActiveBlocks: deactivating a block drops its tool ID whe
 
     syncPruneToolsFromActiveBlocks(state)
 
-    assert.ok(!state.prune.tools.has("toolA"), "deactivated block's tool ID is dropped (BUG-M1 fix)")
+    assert.ok(
+        !state.prune.tools.has("toolA"),
+        "deactivated block's tool ID is dropped (BUG-M1 fix)",
+    )
 })
 
 test("syncPruneToolsFromActiveBlocks: reactivating a block re-adds its tool IDs", () => {
     const state = createSessionState()
     state.prune.messages.blocksById.set(1, {
-        blockId: 1, runId: 1, active: false, deactivatedByUser: true,
-        compressedTokens: 0, summaryTokens: 0,
-        topic: "block1", startId: "m0001", endId: "m0002",
-        anchorMessageId: "m0002", compressMessageId: "msg-origin-1",
-        includedBlockIds: [], consumedBlockIds: [], parentBlockIds: [],
-        directMessageIds: ["m0001", "m0002"], directToolIds: ["toolA", "toolB"],
-        effectiveMessageIds: ["m0001", "m0002"], effectiveToolIds: ["toolA", "toolB"],
-        createdAt: 1, summary: "",
+        blockId: 1,
+        runId: 1,
+        active: false,
+        deactivatedByUser: true,
+        compressedTokens: 0,
+        summaryTokens: 0,
+        topic: "block1",
+        startId: "m0001",
+        endId: "m0002",
+        anchorMessageId: "m0002",
+        compressMessageId: "msg-origin-1",
+        includedBlockIds: [],
+        consumedBlockIds: [],
+        parentBlockIds: [],
+        directMessageIds: ["m0001", "m0002"],
+        directToolIds: ["toolA", "toolB"],
+        effectiveMessageIds: ["m0001", "m0002"],
+        effectiveToolIds: ["toolA", "toolB"],
+        createdAt: 1,
+        summary: "",
     } as any)
     state.toolParameters.set("toolA", { tool: "bash", parameters: {}, turn: 1, tokenCount: 10 })
     state.toolParameters.set("toolB", { tool: "bash", parameters: {}, turn: 1, tokenCount: 20 })
@@ -168,17 +239,28 @@ test("BUG-M1 integration: prune() preserves restored output when tool ID was dro
     const state = createSessionState()
 
     // Build a non-compacted message carrying a tool part.
-    const rawMessages: WithParts[] = [{
-        info: {
-            id: "msg-live", role: "assistant", sessionID: "ses", agent: "assistant",
-            time: { created: 5 },
-        } as any,
-        parts: [{
-            id: `${callID}-part`, messageID: "msg-live", sessionID: "ses", type: "tool",
-            tool: "bash", callID,
-            state: { status: "completed", input: {}, output: ORIGINAL_OUTPUT },
-        } as any],
-    }]
+    const rawMessages: WithParts[] = [
+        {
+            info: {
+                id: "msg-live",
+                role: "assistant",
+                sessionID: "ses",
+                agent: "assistant",
+                time: { created: 5 },
+            } as any,
+            parts: [
+                {
+                    id: `${callID}-part`,
+                    messageID: "msg-live",
+                    sessionID: "ses",
+                    type: "tool",
+                    tool: "bash",
+                    callID,
+                    state: { status: "completed", input: {}, output: ORIGINAL_OUTPUT },
+                } as any,
+            ],
+        },
+    ]
 
     // Pre-condition that should hold immediately after decompress (with my fix):
     // the tool ID is no longer in state.prune.tools.
@@ -191,8 +273,11 @@ test("BUG-M1 integration: prune() preserves restored output when tool ID was dro
     prune(state, new Logger(false), buildConfig(), rawMessages)
 
     const output = toolPartOutput(rawMessages, callID)
-    assert.notEqual(output, PRUNED_PLACEHOLDER,
-        "BUG-M1 fix verified: prune() preserves the restored output when the tool ID is no longer in prune.tools")
+    assert.notEqual(
+        output,
+        PRUNED_PLACEHOLDER,
+        "BUG-M1 fix verified: prune() preserves the restored output when the tool ID is no longer in prune.tools",
+    )
     assert.ok(output.includes("RESTORED-CONTENT-MARKER"), "original output preserved end-to-end")
 })
 
@@ -207,21 +292,39 @@ test("BUG-M1 counter-factual: prune() replaces output with the placeholder when 
     state.prune.tools.set(callID, 200) // Pre-fix state: toolId lingered in prune.tools after decompress
     state.toolParameters.set(callID, { tool: "bash", parameters: {}, turn: 1, tokenCount: 200 })
 
-    const rawMessages: WithParts[] = [{
-        info: {
-            id: "msg-live-2", role: "assistant", sessionID: "ses", agent: "assistant",
-            time: { created: 5 },
-        } as any,
-        parts: [{
-            id: `${callID}-part`, messageID: "msg-live-2", sessionID: "ses", type: "tool",
-            tool: "bash", callID,
-            state: { status: "completed", input: {}, output: ORIGINAL_OUTPUT },
-        } as any],
-    }]
+    const rawMessages: WithParts[] = [
+        {
+            info: {
+                id: "msg-live-2",
+                role: "assistant",
+                sessionID: "ses",
+                agent: "assistant",
+                time: { created: 5 },
+            } as any,
+            parts: [
+                {
+                    id: `${callID}-part`,
+                    messageID: "msg-live-2",
+                    sessionID: "ses",
+                    type: "tool",
+                    tool: "bash",
+                    callID,
+                    state: { status: "completed", input: {}, output: ORIGINAL_OUTPUT },
+                } as any,
+            ],
+        },
+    ]
 
     prune(state, new Logger(false), buildConfig(), rawMessages)
 
     const output = toolPartOutput(rawMessages, callID)
-    assert.equal(output, PRUNED_PLACEHOLDER,
-        "documents the BUG: when toolId is in prune.tools + message NOT compacted, prune() replaces output")
+    assert.equal(
+        output,
+        PRUNED_PLACEHOLDER,
+        "documents the BUG: when toolId is in prune.tools + message NOT compacted, prune() replaces output",
+    )
 })
+// Logic Verified: syncPruneToolsFromActiveBlocks keeps tool IDs from active blocks, drops them on deactivation, and re-adds on reactivation.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

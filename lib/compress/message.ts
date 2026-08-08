@@ -11,10 +11,7 @@ import {
     applyCompressionState,
     wrapCompressedSummary,
 } from "./state"
-import {
-    validateBoundaryIds,
-    validateMonotonicEnd,
-} from "./range-utils"
+import { validateBoundaryIds, validateMonotonicEnd } from "./range-utils"
 import type { CompressMessageToolArgs } from "./types"
 
 function buildSchema() {

@@ -3,6 +3,7 @@ import type { Logger } from "./logger"
 import type { PluginConfig } from "./config"
 import { assignMessageRefs } from "./message-ids"
 import {
+    applyPendingManualTrigger,
     buildPriorityMap,
     buildToolIdList,
     injectCompressNudges,
@@ -24,7 +25,6 @@ import {
 } from "./compress/timing"
 import { filterMessages, filterMessagesInPlace } from "./messages/shape"
 import {
-    applyPendingManualTrigger,
     handleContextCommand,
     handleDecompressCommand,
     handleHelpCommand,
@@ -34,7 +34,7 @@ import {
     handleStatsCommand,
     handleSweepCommand,
 } from "./commands"
-import { type HostPermissionSnapshot } from "./host-permissions"
+import { resolveEffectiveCompressPermission, type HostPermissionSnapshot } from "./host-permissions"
 import { compressPermission, syncCompressPermissionState } from "./compress-permission"
 import { checkSession, ensureSessionInitialized, saveSessionState, syncToolCache } from "./state"
 import { cacheSystemPromptTokens } from "./ui/utils"
@@ -47,14 +47,57 @@ const INTERNAL_AGENT_SIGNATURES = [
     "Summarize what was done in this conversation",
 ]
 
-/** True only when every supplied system prompt is from an internal OpenCode agent. */
+// ponytail: Unicode whitespace beyond ASCII (\u00a0 NBSP, ideographic space, etc.)
+// must collapse to ASCII space so substring matching survives upstream prompt
+// drift. Add new Unicode classes here only when an upstream OpenCode agent
+// surfaces a new whitespace variant; the set covers all known v1.x and v2.x
+// title-generator / summarizer prompts.
+const UNICODE_WHITESPACE_RE = /[\u00a0\u2000-\u200b\u2028\u2029\u202f\u205f\u3000]/g
+
+/** Collapse whitespace (incl. Unicode NBSP and ideographic space) and trim. */
+function normalizePrompt(prompt: string): string {
+    return prompt.replace(UNICODE_WHITESPACE_RE, " ").replace(/\s+/g, " ").trim()
+}
+
+/** True only when every supplied system prompt is from an internal OpenCode agent.
+ *  Matches the signature directly (with case/whitespace tolerance) or as the
+ *  primary directive following an internal metadata prefix (e.g. OpenCode's
+ *  `OpenCode <role> metadata: ...`). A quoted reference like `The user quoted:
+ *  You are a title generator` does NOT match. */
 export function isInternalAgentSystem(systemPrompts: string[]): boolean {
     if (systemPrompts.length === 0) {
         return false
     }
-    return systemPrompts.every((prompt) =>
-        INTERNAL_AGENT_SIGNATURES.some((sig) => prompt.includes(sig)),
-    )
+    return systemPrompts.every((prompt) => {
+        const normalized = normalizePrompt(prompt).toLowerCase()
+        if (normalized.length === 0) {
+            return false
+        }
+        for (const sig of INTERNAL_AGENT_SIGNATURES) {
+            const sigNormalized = normalizePrompt(sig).toLowerCase()
+            if (normalized === sigNormalized) {
+                return true
+            }
+            if (
+                normalized.startsWith(sigNormalized + " ") ||
+                normalized.startsWith(sigNormalized)
+            ) {
+                return true
+            }
+        }
+        // Fallback: OpenCode wraps its internal-agent prompts with a
+        // `<role> metadata:` prefix. A signature in that context is an
+        // instruction, not a user quote.
+        if (/\bmetadata:\s/i.test(prompt)) {
+            const lower = prompt.toLowerCase()
+            for (const sig of INTERNAL_AGENT_SIGNATURES) {
+                if (lower.includes(sig.toLowerCase())) {
+                    return true
+                }
+            }
+        }
+        return false
+    })
 }
 
 export function createSystemPromptHandler(
@@ -62,6 +105,7 @@ export function createSystemPromptHandler(
     logger: Logger,
     config: PluginConfig,
     prompts: PromptStore,
+    hostPermissions: HostPermissionSnapshot = { global: undefined, agents: {} },
 ) {
     return async (
         input: { sessionID?: string; model: { limit: { context: number } } },
@@ -72,6 +116,11 @@ export function createSystemPromptHandler(
             logger.debug("Cached model context limit", { limit: state.modelContextLimit })
         }
 
+        // Cache the latest system prompts so the message-transform handler can
+        // honor DPP-009 (skip internal OpenCode agents) without a new hook
+        // surface. State field is read by both handlers; written here only.
+        ;(state as { lastSystem?: string[] }).lastSystem = output.system
+
         if (state.isSubAgent && !config.experimental.allowSubAgents) {
             return
         }
@@ -81,10 +130,15 @@ export function createSystemPromptHandler(
             return
         }
 
+        // ponytail: same-session fires have already synced state.compressPermission
+        // via syncCompressPermissionState. On the very first injection the state
+        // cache is still null, so resolve against host permissions directly.
+        // Agent-scoped denies land on the next messages.transform — the system-
+        // transform input carries no agent field, by design.
         const effectivePermission =
             input.sessionID && state.sessionId === input.sessionID
                 ? compressPermission(state, config)
-                : config.compress.permission
+                : resolveEffectiveCompressPermission(config.compress.permission, hostPermissions)
 
         if (effectivePermission === "deny") {
             return
@@ -115,6 +169,15 @@ export function createChatMessageTransformHandler(
     hostPermissions: HostPermissionSnapshot,
 ) {
     return async (input: {}, output: { messages: WithParts[] }) => {
+        // DPP-009: skip the full pipeline for internal OpenCode agents (title
+        // generators, summarizers). Mirrors the gate in createSystemPromptHandler
+        // using the cached state.lastSystem, because the message-transform input
+        // carries no `system` field.
+        const lastSystem = (state as { lastSystem?: string[] }).lastSystem
+        if (lastSystem && isInternalAgentSystem(lastSystem)) {
+            return
+        }
+
         const receivedMessages = Array.isArray(output.messages) ? output.messages.length : 0
         const messages = filterMessagesInPlace(output.messages)
         if (messages.length !== receivedMessages) {
@@ -131,6 +194,7 @@ export function createChatMessageTransformHandler(
             output.messages,
             config.manualMode.enabled,
             config.compress.stateMaxAgeDays,
+            config.experimental.allowSubAgents,
         )
 
         syncCompressPermissionState(state, config, hostPermissions, output.messages)
@@ -146,64 +210,84 @@ export function createChatMessageTransformHandler(
         // into the transform pipeline. ponytail: gated on debug via Logger.
         try {
             const now = Date.now()
-            const event = buildDiagnosticEvent(
-                state,
-                state.sessionId,
-                output.messages,
-                now,
-            )
+            const event = buildDiagnosticEvent(state, state.sessionId, output.messages, now)
             state.diagnostic.fireCount = event.fireNumber
             state.diagnostic.lastPrefixHash = event.prefixHash
             state.diagnostic.lastFireAt = now
             await logger.diagnostic(event as unknown as Record<string, unknown>)
-            // Mirror a compact summary to the daily log so users can spot
-            // balloon events without parsing JSONL.
-            logger.info("DCP transform fire", {
-                fire: event.fireNumber,
-                msgs: event.messageCount,
-                bytes: event.estimatedBytes,
-                tasks: event.taskToolCount,
-                synthetic: event.synthetic.totalCount,
-                prefixChanged: event.prefixChanged,
-                cacheMiss: event.possibleCacheMiss,
-                lastCacheRead: event.lastAssistant.cacheRead,
-                lastInput: event.lastAssistant.input,
-                msSinceLast: event.msSinceLastFire,
-            })
+            // ponytail: only mirror to the daily log when something interesting
+            // changed; every-fire mirroring balloons the log without debug
+            // signal value.
+            if (event.prefixChanged || event.possibleCacheMiss) {
+                logger.info("DCP transform fire", {
+                    fire: event.fireNumber,
+                    msgs: event.messageCount,
+                    bytes: event.estimatedBytes,
+                    tasks: event.taskToolCount,
+                    synthetic: event.synthetic.totalCount,
+                    prefixChanged: event.prefixChanged,
+                    cacheMiss: event.possibleCacheMiss,
+                    lastCacheRead: event.lastAssistant.cacheRead,
+                    lastInput: event.lastAssistant.input,
+                    msSinceLast: event.msSinceLastFire,
+                })
+            }
         } catch {
             // Swallow — diagnostic failure must not break the transform.
         }
 
-        stripHallucinations(output.messages)
-        cacheSystemPromptTokens(state, output.messages)
-        assignMessageRefs(state, output.messages)
-        syncCompressionBlocks(state, logger, output.messages)
-        syncToolCache(state, config, logger, output.messages)
-        buildToolIdList(state, output.messages)
-        prune(state, logger, config, output.messages)
-        await injectExtendedSubAgentResults(
-            client,
-            state,
-            logger,
-            output.messages,
-            config.experimental.allowSubAgents,
-        )
-        const compressionPriorities = buildPriorityMap(config, state, output.messages)
-        prompts.reload()
-        injectCompressNudges(
-            state,
-            config,
-            logger,
-            output.messages,
-            prompts.getRuntimePrompts(),
-            compressionPriorities,
-        )
-        injectMessageIds(state, config, output.messages, compressionPriorities)
-        applyPendingManualTrigger(state, output.messages, logger)
-        stripStaleMetadata(output.messages)
+        // BUG-028: outer try/catch wraps the 13-step pipeline plus the
+        // trailing saveContext. Any step throwing (e.g. assignMessageRefs
+        // capacity exhausted, saveContext disk-full) is logged and swallowed
+        // — OpenCode's experimental chat hook contract does not promise a
+        // graceful recovery path, so the defensive move is to return the
+        // un-transformed messages instead of breaking the LLM call.
+        try {
+            stripHallucinations(output.messages)
+            cacheSystemPromptTokens(state, output.messages)
+            assignMessageRefs(state, output.messages)
+            syncCompressionBlocks(state, logger, output.messages)
+            syncToolCache(state, config, logger, output.messages)
+            buildToolIdList(state, output.messages, config)
+            prune(state, logger, config, output.messages)
+            await injectExtendedSubAgentResults(
+                client,
+                state,
+                logger,
+                output.messages,
+                config.experimental.allowSubAgents,
+            )
+            const compressionPriorities = buildPriorityMap(config, state, output.messages)
+            prompts.reload()
+            injectCompressNudges(
+                state,
+                config,
+                logger,
+                output.messages,
+                prompts.getRuntimePrompts(),
+                compressionPriorities,
+            )
+            // BUG-061: apply the pending manual trigger BEFORE injectMessageIds so
+            // the rewritten prompt receives a fresh mNNNN tag rather than the
+            // stale one assigned to the original text.
+            applyPendingManualTrigger(state, output.messages, logger)
+            injectMessageIds(state, config, output.messages, compressionPriorities)
+            stripStaleMetadata(output.messages)
 
-        if (state.sessionId) {
-            await logger.saveContext(state.sessionId, output.messages)
+            if (state.sessionId) {
+                try {
+                    await logger.saveContext(state.sessionId, output.messages)
+                } catch (err: any) {
+                    logger.warn("DCP saveContext failed; transform returned anyway", {
+                        error: err?.message ?? String(err),
+                    })
+                }
+            }
+        } catch (err: any) {
+            logger.warn("DCP transform failed; returning un-transformed messages", {
+                error: err?.message ?? String(err),
+            })
+            return
         }
     }
 }
@@ -238,6 +322,7 @@ export function createCommandExecuteHandler(
                 messages,
                 config.manualMode.enabled,
                 config.compress.stateMaxAgeDays,
+                config.experimental.allowSubAgents,
             )
 
             syncCompressPermissionState(state, config, hostPermissions, messages)
@@ -288,9 +373,6 @@ export function createCommandExecuteHandler(
             if (subcommand === "compress") {
                 const userFocus = subArgs.join(" ").trim()
                 const prompt = await handleManualTriggerCommand(commandCtx, "compress", userFocus)
-                if (!prompt) {
-                    throw new Error("__DCP_MANUAL_TRIGGER_BLOCKED__")
-                }
 
                 state.manualMode = "compress-pending"
                 state.pendingManualTrigger = {

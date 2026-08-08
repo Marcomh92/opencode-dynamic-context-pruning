@@ -1,4 +1,4 @@
-export const CONTEXT_LIMIT_NUDGE = `<dcp-system-reminder>
+export const CONTEXT_LIMIT_NUDGE = `
 CRITICAL WARNING: MAX CONTEXT LIMIT REACHED
 
 You are at or beyond the configured max context threshold. This is an emergency context-recovery moment.
@@ -14,5 +14,4 @@ Avoid the newest active working messages unless it is clearly closed.
 SUMMARY REQUIREMENTS
 Your summary MUST cover all essential details from the selected messages so work can continue.
 If the compressed range includes user messages, preserve user intent exactly. Prefer direct quotes for short user messages to avoid semantic drift.
-</dcp-system-reminder>
 `

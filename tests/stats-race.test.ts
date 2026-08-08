@@ -6,11 +6,7 @@ import { join } from "node:path"
 import { createSessionState } from "../lib/state"
 import { FORK_SCHEMA_VERSION } from "../lib/state/types"
 import { flushPruneStats } from "../lib/state/utils"
-import {
-    loadSessionState,
-    resetSaveCoalescer,
-    saveSessionState,
-} from "../lib/state/persistence"
+import { loadSessionState, resetSaveCoalescer, saveSessionState } from "../lib/state/persistence"
 import { Logger } from "../lib/logger"
 
 const testDataHome = join(tmpdir(), `opencode-dcp-stats-race-data-${process.pid}`)
@@ -136,3 +132,7 @@ test("saveSessionState falls back to a plain write when the existing file is mal
     assert.deepEqual(persisted.prune.tools, {})
     assert.deepEqual(persisted.nudges.contextLimitAnchors, [])
 })
+// Logic Verified: flushPruneStats moves the counter into the lifetime total without double-counting across sequential flushes and reloads, and saveSessionState merges totalPruneTokens monotonically.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

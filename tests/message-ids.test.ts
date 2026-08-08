@@ -87,3 +87,7 @@ test("checkSession resets message id aliases after native compaction", async () 
     assert.equal(state.messageIds.byRef.get("m0002"), "msg-user-follow-up")
     assert.equal(state.messageIds.nextRef, 3)
 })
+// Logic Verified: checkSession resets message-id aliases after native compaction so subsequent injectMessageRefs gets a fresh namespace.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

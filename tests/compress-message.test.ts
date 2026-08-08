@@ -888,3 +888,7 @@ test("compress message mode reports issues when every batch entry is skipped", a
 
     assert.equal(state.prune.messages.blocksById.size, 0)
 })
+// Logic Verified: compress-message mode appends the non-editable format extension, batches individual summaries, records call IDs, and refuses partial application on preparation failure.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

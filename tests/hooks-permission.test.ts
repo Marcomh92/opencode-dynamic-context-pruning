@@ -744,3 +744,7 @@ test("manual mode persisted setting refreshes server session state", async () =>
     await refreshManualMode(state, sessionId, logger, true)
     assert.equal(state.manualMode, false)
 })
+// Logic Verified: system/chat/command/text/event hooks honour the resolved effective compress permission, strip hallucinated tags, drop invalid messages, and attach durations to matching blocks.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

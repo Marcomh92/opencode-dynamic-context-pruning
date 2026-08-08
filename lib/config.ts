@@ -105,7 +105,6 @@ export const VALID_CONFIG_KEYS = new Set([
     "enabled",
     "autoUpdate",
     "debug",
-    "showUpdateToasts",
     "pruneNotification",
     "pruneNotificationType",
     "turnProtection",
@@ -178,6 +177,32 @@ interface ValidationError {
     key: string
     expected: string
     actual: string
+}
+
+// ponytail: shared per-item validator for the four protectedTools arrays.
+// Rejects whitespace and empty strings — they would break the `<...>` wrapping
+// and silently miss `isToolNameProtected` exact-set membership. Regex
+// `/^\S+$/` matches SDK tool naming conventions (dots allowed; some OpenCode
+// tool providers use them). BUG-084.
+const TOOL_NAME_REGEX = /^\S+$/
+const validateProtectedToolsEntries = (
+    keyPath: string,
+    entries: unknown,
+    errors: ValidationError[],
+): void => {
+    if (!Array.isArray(entries)) {
+        return
+    }
+    for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i]
+        if (typeof entry !== "string" || !TOOL_NAME_REGEX.test(entry)) {
+            errors.push({
+                key: `${keyPath}[${i}]`,
+                expected: `non-empty tool name without whitespace (regex ${TOOL_NAME_REGEX.source})`,
+                actual: JSON.stringify(entry),
+            })
+        }
+    }
 }
 
 export function validateConfigTypes(config: Record<string, any>): ValidationError[] {
@@ -324,6 +349,11 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     actual: typeof commands.protectedTools,
                 })
             }
+            validateProtectedToolsEntries(
+                "commands.protectedTools",
+                commands.protectedTools,
+                errors,
+            )
         }
     }
 
@@ -438,6 +468,11 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     actual: typeof compress.protectedTools,
                 })
             }
+            validateProtectedToolsEntries(
+                "compress.protectedTools",
+                compress.protectedTools,
+                errors,
+            )
 
             if (compress.protectTags !== undefined && typeof compress.protectTags !== "boolean") {
                 errors.push({
@@ -634,10 +669,7 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     actual: typeof compress.stateMaxAgeDays,
                 })
             }
-            if (
-                typeof compress.stateMaxAgeDays === "number" &&
-                compress.stateMaxAgeDays < 0
-            ) {
+            if (typeof compress.stateMaxAgeDays === "number" && compress.stateMaxAgeDays < 0) {
                 errors.push({
                     key: "compress.stateMaxAgeDays",
                     expected: "non-negative number or null",
@@ -670,6 +702,11 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                 actual: typeof strategies.deduplication.protectedTools,
             })
         }
+        validateProtectedToolsEntries(
+            "strategies.deduplication.protectedTools",
+            strategies.deduplication?.protectedTools,
+            errors,
+        )
 
         if (strategies.purgeErrors) {
             if (
@@ -714,6 +751,11 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     actual: typeof strategies.purgeErrors.protectedTools,
                 })
             }
+            validateProtectedToolsEntries(
+                "strategies.purgeErrors.protectedTools",
+                strategies.purgeErrors.protectedTools,
+                errors,
+            )
         }
     }
 
@@ -820,20 +862,19 @@ const defaultConfig: PluginConfig = {
     },
 }
 
-const GLOBAL_CONFIG_DIR = process.env.XDG_CONFIG_HOME
-    ? join(process.env.XDG_CONFIG_HOME, "opencode")
-    : join(homedir(), ".config", "opencode")
-const GLOBAL_CONFIG_PATH_JSONC = join(GLOBAL_CONFIG_DIR, "dcp.jsonc")
-const GLOBAL_CONFIG_PATH_JSON = join(GLOBAL_CONFIG_DIR, "dcp.json")
-
 function findOpencodeDir(startDir: string): string | null {
     let current = startDir
-    while (current !== "/") {
+    while (true) {
         const candidate = join(current, ".opencode")
         if (existsSync(candidate) && statSync(candidate).isDirectory()) {
             return candidate
         }
         const parent = dirname(current)
+        // ponytail: universal termination — `parent === current` is the sole
+        // root guard (works on POSIX `/` and Windows `C:\`). The previous
+        // loop header compared `current` to the POSIX root path, which is
+        // always true on Windows; the loop only ended via this secondary
+        // break. BUG-016.
         if (parent === current) {
             break
         }
@@ -847,10 +888,16 @@ function getConfigPaths(ctx?: PluginInput): {
     configDir: string | null
     project: string | null
 } {
-    const global = existsSync(GLOBAL_CONFIG_PATH_JSONC)
-        ? GLOBAL_CONFIG_PATH_JSONC
-        : existsSync(GLOBAL_CONFIG_PATH_JSON)
-          ? GLOBAL_CONFIG_PATH_JSON
+    // Resolve XDG_CONFIG_HOME when loading, not when this module is imported.
+    const globalConfigDir = process.env.XDG_CONFIG_HOME
+        ? join(process.env.XDG_CONFIG_HOME, "opencode")
+        : join(homedir(), ".config", "opencode")
+    const globalConfigPathJsonc = join(globalConfigDir, "dcp.jsonc")
+    const globalConfigPathJson = join(globalConfigDir, "dcp.json")
+    const global = existsSync(globalConfigPathJsonc)
+        ? globalConfigPathJsonc
+        : existsSync(globalConfigPathJson)
+          ? globalConfigPathJson
           : null
 
     let configDir: string | null = null
@@ -880,18 +927,6 @@ function getConfigPaths(ctx?: PluginInput): {
     }
 
     return { global, configDir, project }
-}
-
-function createDefaultConfig(): void {
-    if (!existsSync(GLOBAL_CONFIG_DIR)) {
-        mkdirSync(GLOBAL_CONFIG_DIR, { recursive: true })
-    }
-
-    const configContent = `{
-  "$schema": "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json"
-}
-`
-    writeFileSync(GLOBAL_CONFIG_PATH_JSONC, configContent, "utf-8")
 }
 
 interface ConfigLoadResult {
@@ -935,10 +970,9 @@ function mergeStrategies(
         },
         purgeErrors: {
             enabled: override.purgeErrors?.enabled ?? base.purgeErrors.enabled,
-            turns: override.purgeErrors?.turns ?? base.purgeErrors.turns,
+            turns: clampMin1(override.purgeErrors?.turns ?? base.purgeErrors.turns),
             // ponytail: replace-semantics per user override — see mergeCompress rationale.
-            protectedTools:
-                override.purgeErrors?.protectedTools ?? base.purgeErrors.protectedTools,
+            protectedTools: override.purgeErrors?.protectedTools ?? base.purgeErrors.protectedTools,
         },
     }
 }
@@ -958,10 +992,17 @@ function mergeCompress(
         summaryBuffer: override.summaryBuffer ?? base.summaryBuffer,
         maxContextLimit: override.maxContextLimit ?? base.maxContextLimit,
         minContextLimit: override.minContextLimit ?? base.minContextLimit,
-        modelMaxLimits: override.modelMaxLimits ?? base.modelMaxLimits,
-        modelMinLimits: override.modelMinLimits ?? base.modelMinLimits,
-        nudgeFrequency: override.nudgeFrequency ?? base.nudgeFrequency,
-        iterationNudgeThreshold: override.iterationNudgeThreshold ?? base.iterationNudgeThreshold,
+        // ponytail: per-key additive merge (Set-union by providerID/modelID).
+        // Pre-fix this was replace-semantics: a project-layer entry for one
+        // model silently wiped every global override. The schema treats these
+        // as per-model overrides, so per-key merge matches user intent.
+        // Add when the user asks for full-replace semantics.
+        modelMaxLimits: { ...base.modelMaxLimits, ...override.modelMaxLimits },
+        modelMinLimits: { ...base.modelMinLimits, ...override.modelMinLimits },
+        nudgeFrequency: clampMin1(override.nudgeFrequency ?? base.nudgeFrequency),
+        iterationNudgeThreshold: clampMin1(
+            override.iterationNudgeThreshold ?? base.iterationNudgeThreshold,
+        ),
         nudgeForce: override.nudgeForce ?? base.nudgeForce,
         // ponytail: replace-semantics, not additive. The user's dcp.jsonc is the
         // single source of truth — `protectedTools: []` must mean "nothing
@@ -980,24 +1021,26 @@ function mergeCompress(
         recoveryFadeWindow: clampMin1(override.recoveryFadeWindow ?? base.recoveryFadeWindow),
         forkSchemaVersion: override.forkSchemaVersion ?? base.forkSchemaVersion,
         stateMaxAgeDays: clampNullOrNonNeg(
-            override.stateMaxAgeDays === undefined ? base.stateMaxAgeDays : override.stateMaxAgeDays,
+            override.stateMaxAgeDays === undefined
+                ? base.stateMaxAgeDays
+                : override.stateMaxAgeDays,
         ),
     }
 }
 
-function clampRatio(value: number): number {
+export function clampRatio(value: number): number {
     if (typeof value !== "number" || !Number.isFinite(value)) return 0.7
     if (value <= 0) return 0.7
     if (value > 1) return 1
     return value
 }
 
-function clampMin1(value: number): number {
+export function clampMin1(value: number): number {
     if (typeof value !== "number" || !Number.isFinite(value)) return 1
     return value < 1 ? 1 : value
 }
 
-function clampNullOrNonNeg(value: number | null | undefined): number | null {
+export function clampNullOrNonNeg(value: number | null | undefined): number | null {
     if (value === null || value === undefined) return null
     if (typeof value !== "number" || !Number.isFinite(value)) return null
     return value < 0 ? 0 : value
@@ -1082,17 +1125,21 @@ function mergeLayer(config: PluginConfig, data: Record<string, any>): PluginConf
         debug: data.debug ?? config.debug,
         pruneNotification: data.pruneNotification ?? config.pruneNotification,
         pruneNotificationType: data.pruneNotificationType ?? config.pruneNotificationType,
+        // ponytail: mergeLayer's `data` parameter is `Record<string, any>`, so per-section casts bridge into the typed merge helpers. Tighten to `DeepPartial<PluginConfig>` to drop all four casts in one pass.
         commands: mergeCommands(config.commands, data.commands as any),
+        // ponytail: same mergeLayer seam as the commands cast above — see header comment.
         manualMode: mergeManualMode(config.manualMode, data.manualMode as any),
         turnProtection: {
             enabled: data.turnProtection?.enabled ?? config.turnProtection.enabled,
             turns: data.turnProtection?.turns ?? config.turnProtection.turns,
         },
+        // ponytail: same mergeLayer seam as the commands cast above — see header comment.
         experimental: mergeExperimental(config.experimental, data.experimental as any),
         protectedFilePatterns: [
             ...new Set([...config.protectedFilePatterns, ...(data.protectedFilePatterns ?? [])]),
         ],
         compress: mergeCompress(config.compress, data.compress as CompressOverride),
+        // ponytail: same mergeLayer seam as the commands cast above — see header comment.
         strategies: mergeStrategies(config.strategies, data.strategies as any),
     }
 }
@@ -1116,9 +1163,9 @@ export function getConfig(ctx: PluginInput): PluginConfig {
     let config = deepCloneConfig(defaultConfig)
     const configPaths = getConfigPaths(ctx)
 
-    if (!configPaths.global) {
-        createDefaultConfig()
-    }
+    // ponytail: no unrequested side-effects at plugin init — a user who
+    // intentionally deleted dcp.jsonc gets defaults, not a silently recreated
+    // file. BUG-068.
 
     const layers: Array<{ path: string | null; name: string; isProject: boolean }> = [
         { path: configPaths.global, name: "config", isProject: false },

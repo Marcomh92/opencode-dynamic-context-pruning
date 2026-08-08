@@ -18,7 +18,7 @@ A new section appended to the compress tool's description that instructs the age
 Two clauses are appended:
 
 1. **Conditional clause** — included only when `compress.protectedSummarySources` is non-empty. Names the configured context-gathering skills and frames their outputs as non-reproducible.
-2. **Generic clause** — always included when the feature is enabled. Broader instruction: preserve *any* knowledge the agent has gathered about the project, regardless of how it was obtained (file reads, subagent dispatches, exploration).
+2. **Generic clause** — always included when the feature is enabled. Broader instruction: preserve _any_ knowledge the agent has gathered about the project, regardless of how it was obtained (file reads, subagent dispatches, exploration).
 
 ## Why
 
@@ -78,6 +78,7 @@ More generally, preserve any knowledge YOU have gathered about the project
 itself — how it works, what it does, its architecture, conventions, config
 keys, schema, build system, and runtime behavior. This includes knowledge
 you obtained from:
+
 - Reading project files (READMEs, architecture docs, plans, config files,
   schema definitions, source code you investigated for context).
 - Subagent dispatches (any task() result that summarizes project state,
@@ -103,11 +104,8 @@ These are subject to the same rules:
 {
     "compress": {
         "preserveProjectContext": true,
-        "protectedSummarySources": [
-            "project-context-lite",
-            "project-context-router"
-        ]
-    }
+        "protectedSummarySources": ["project-context-lite", "project-context-router"],
+    },
 }
 ```
 
@@ -136,10 +134,10 @@ These don't conflict — both push toward preservation — but the **summary blo
 ```jsonc
 {
     "compress": {
-        "protectedTools": ["skill", "todowrite", "todoread"],   // remove "task"
+        "protectedTools": ["skill", "todowrite", "todoread"], // remove "task"
         "preserveProjectContext": true,
-        "protectedSummarySources": ["project-context-lite", "project-context-router"]
-    }
+        "protectedSummarySources": ["project-context-lite", "project-context-router"],
+    },
 }
 ```
 
@@ -153,12 +151,12 @@ This recommendation should be surfaced in the plugin's startup log when both fea
 
 Project context preservation is **independent** of loose compression but composes cleanly with it:
 
-| Feature | Detection signal | Mechanism | Determinism |
-|---|---|---|---|
-| **This feature** (project context preservation) | Skill names + agent dispatch memory | Description injection (static, registration-time) | ~90% model compliance |
-| `compress.looseCompressionPatterns` | File globs (`**/*.md`) | Description injection (static) + plugin-side suppression | 100% file match; compression itself is model-dependent |
-| `protectedFilePatterns` | File globs | Full-output append to summary block | 100% (but ratio = 1.0, trips non-compacting) |
-| `compress.protectTags` | `<protect>...</protect>` markup (user-role messages only) | Tag-region verbatim preservation | 100% |
+| Feature                                         | Detection signal                                          | Mechanism                                                | Determinism                                            |
+| ----------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------ |
+| **This feature** (project context preservation) | Skill names + agent dispatch memory                       | Description injection (static, registration-time)        | ~90% model compliance                                  |
+| `compress.looseCompressionPatterns`             | File globs (`**/*.md`)                                    | Description injection (static) + plugin-side suppression | 100% file match; compression itself is model-dependent |
+| `protectedFilePatterns`                         | File globs                                                | Full-output append to summary block                      | 100% (but ratio = 1.0, trips non-compacting)           |
+| `compress.protectTags`                          | `<protect>...</protect>` markup (user-role messages only) | Tag-region verbatim preservation                         | 100%                                                   |
 
 **Precedence:** none defined between this feature and loose compression — they target different detection signals (skill-name vs file-glob). A message that came from a `task()` dispatch is classified by this feature; a message that came from a `read` of a matched file is classified by loose compression. Both descriptions can apply to different messages in the same compress call without conflict.
 
@@ -168,40 +166,41 @@ Project context preservation is **independent** of loose compression but compose
 
 ## Code anchors
 
-| Anchor | What it is |
-|---|---|
-| `lib/prompts/compress-message.ts:1-43` | Static summary prompt (description source) |
-| `lib/prompts/compress-range.ts` | Sibling prompt for range-mode compress |
-| `lib/compress/message.ts:50` | Tool description construction (registration-time) — the injection point |
-| `lib/compress/range.ts:63` | Same for range mode |
-| `lib/prompts/extensions/tool.ts` | `MESSAGE_FORMAT_EXTENSION` — append-precedent for tool descriptions |
-| `lib/config.ts:97` | `COMPRESS_DEFAULT_PROTECTED_TOOLS = ["task", "skill", "todowrite", "todoread"]` — informs the overlap warning |
-| `lib/compress/protected-content.ts:106-196` | `appendProtectedTools` — overlap site (not modified by this feature) |
-| `lib/config.ts:120-139, 356-643, 787-805, 948-982, 1054-1059` | Full 6-site pattern for adding a compress.* key |
-| `dcp.schema.json:131-302` | Existing compress.* schema block (clone entry) |
+| Anchor                                                        | What it is                                                                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `lib/prompts/compress-message.ts:1-43`                        | Static summary prompt (description source)                                                                    |
+| `lib/prompts/compress-range.ts`                               | Sibling prompt for range-mode compress                                                                        |
+| `lib/compress/message.ts:50`                                  | Tool description construction (registration-time) — the injection point                                       |
+| `lib/compress/range.ts:63`                                    | Same for range mode                                                                                           |
+| `lib/prompts/extensions/tool.ts`                              | `MESSAGE_FORMAT_EXTENSION` — append-precedent for tool descriptions                                           |
+| `lib/config.ts:97`                                            | `COMPRESS_DEFAULT_PROTECTED_TOOLS = ["task", "skill", "todowrite", "todoread"]` — informs the overlap warning |
+| `lib/compress/protected-content.ts:106-196`                   | `appendProtectedTools` — overlap site (not modified by this feature)                                          |
+| `lib/config.ts:120-139, 356-643, 787-805, 948-982, 1054-1059` | Full 6-site pattern for adding a compress.\* key                                                              |
+| `dcp.schema.json:131-302`                                     | Existing compress.\* schema block (clone entry)                                                               |
 
 ### Implementation sketch
 
 1. New config keys (`preserveProjectContext: boolean`, `protectedSummarySources: string[]`) — schema entry + merge helper + validation. ~30 lines.
 2. New module `lib/compress/project-context-prompt.ts` exporting `buildProjectContextDescription(config): { conditional: string, generic: string }`. The conditional is empty string when `protectedSummarySources.length === 0`. Both are empty strings when `preserveProjectContext === false`. ~30 lines.
 3. Modify `lib/compress/message.ts:50` and `range.ts:63`:
-   ```ts
-   const projectContext = buildProjectContextDescription(ctx.config)
-   description: runtimePrompts.compressMessage
-                + MESSAGE_FORMAT_EXTENSION
-                + projectContext.conditional
-                + projectContext.generic
-   ```
-   ~5 lines.
+    ```ts
+    const projectContext = buildProjectContextDescription(ctx.config)
+    description: runtimePrompts.compressMessage +
+        MESSAGE_FORMAT_EXTENSION +
+        projectContext.conditional +
+        projectContext.generic
+    ```
+    ~5 lines.
 4. Tests:
-   - `buildProjectContextDescription` returns expected strings for: empty sources, single source, multiple sources, master toggle off.
-   - integration: construct a `ToolContext` with the new config, call `createCompressMessageTool`, assert the registered tool **description** contains the expected skill names + verbatim-preservation language.
-   - ~80 lines
+    - `buildProjectContextDescription` returns expected strings for: empty sources, single source, multiple sources, master toggle off.
+    - integration: construct a `ToolContext` with the new config, call `createCompressMessageTool`, assert the registered tool **description** contains the expected skill names + verbatim-preservation language.
+    - ~80 lines
 5. Documentation: `MY_README.md` new section + `MY_CHANGELOG.md` entry + the `protectedTools` overlap recommendation surfaced in startup log when both features are active.
 
 **Total estimate:** ~150 lines. Fork bumps to **3.1.18** (patch).
 
 **Trade-offs:**
+
 - ✓ Cheap. ~150 lines, no structural changes, no new modules beyond the prompt builder.
 - ✓ Self-contained. Doesn't depend on loose compression or any other in-flight feature.
 - ✓ Model-judged classification handles the "I decided on my own" case without explicit detection logic.
@@ -241,19 +240,19 @@ Before implementation, these open questions need resolution:
 
 ## File / module inventory (post-implementation, fork 3.1.18)
 
-| File | Status | Purpose |
-|---|---|---|
-| `lib/compress/project-context-prompt.ts` | NEW | `buildProjectContextDescription(config)` helper |
-| `lib/compress/message.ts` | MODIFIED | Append PCP clauses to description at `:50` |
-| `lib/compress/range.ts` | MODIFIED | Same |
-| `lib/config.ts` | MODIFIED | New keys + merge + validation |
-| `dcp.schema.json` | MODIFIED | New entries |
-| `tests/project-context-preservation.test.ts` | NEW | Unit + integration tests |
-| `lib/commands/stats.ts` | MODIFIED | Surface feature state in `/dcp stats` |
-| `lib/index.ts` (or `lib/hooks.ts`) | MODIFIED | Startup log warning when PCP + default `protectedTools` overlap |
-| `MY_README.md` | MODIFIED | New section: "Project Context Preservation" |
-| `MY_CHANGELOG.md` | MODIFIED | New entry for 3.1.18 |
-| `MY_PROJECT_CONTEXT_PRESERVATION.md` (this file) | MOVED to `docs/` | Final design doc |
+| File                                             | Status           | Purpose                                                         |
+| ------------------------------------------------ | ---------------- | --------------------------------------------------------------- |
+| `lib/compress/project-context-prompt.ts`         | NEW              | `buildProjectContextDescription(config)` helper                 |
+| `lib/compress/message.ts`                        | MODIFIED         | Append PCP clauses to description at `:50`                      |
+| `lib/compress/range.ts`                          | MODIFIED         | Same                                                            |
+| `lib/config.ts`                                  | MODIFIED         | New keys + merge + validation                                   |
+| `dcp.schema.json`                                | MODIFIED         | New entries                                                     |
+| `tests/project-context-preservation.test.ts`     | NEW              | Unit + integration tests                                        |
+| `lib/commands/stats.ts`                          | MODIFIED         | Surface feature state in `/dcp stats`                           |
+| `lib/index.ts` (or `lib/hooks.ts`)               | MODIFIED         | Startup log warning when PCP + default `protectedTools` overlap |
+| `MY_README.md`                                   | MODIFIED         | New section: "Project Context Preservation"                     |
+| `MY_CHANGELOG.md`                                | MODIFIED         | New entry for 3.1.18                                            |
+| `MY_PROJECT_CONTEXT_PRESERVATION.md` (this file) | MOVED to `docs/` | Final design doc                                                |
 
 ---
 

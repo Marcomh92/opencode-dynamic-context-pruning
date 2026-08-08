@@ -298,3 +298,7 @@ test("isContextOverLimits does not extend the max threshold when summaryBuffer i
 
     assert.equal(overLimit.overMaxLimit, true)
 })
+// Logic Verified: getCurrentTokenUsage returns 0 until a fresh assistant follows compaction, and isContextOverLimits honours summaryBuffer and ignores stale summary totals.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

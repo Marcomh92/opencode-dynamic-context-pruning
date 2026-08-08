@@ -19,13 +19,7 @@ mkdirSync(testDataHome, { recursive: true })
 mkdirSync(testConfigHome, { recursive: true })
 
 // Mirror the storage location layout used by lib/state/persistence.ts.
-const STORAGE_DIR = join(
-    process.env.XDG_DATA_HOME,
-    "opencode",
-    "storage",
-    "plugin",
-    "dcp",
-)
+const STORAGE_DIR = join(process.env.XDG_DATA_HOME, "opencode", "storage", "plugin", "dcp")
 
 /** Build a Logger-shaped stub that captures warn/info calls. The persistence
  *  layer calls `logger.warn(...)` to drop age-expired state (issue #590 +
@@ -140,9 +134,7 @@ test("loadSessionState: state older than threshold drops and emits a warning", a
         warnings.length > 0,
         "expected a logger.warn call when the persisted state is age-expired",
     )
-    const ageWarn = warnings.find((message) =>
-        /stateMaxAgeDays/.test(message),
-    )
+    const ageWarn = warnings.find((message) => /stateMaxAgeDays/.test(message))
     assert.ok(ageWarn, `expected a max-age warning, got: ${JSON.stringify(warnings)}`)
     assert.match(ageWarn as string, /Dropping persisted session state/)
     assert.match(ageWarn as string, /exceeds/)
@@ -192,10 +184,7 @@ test("loadSessionState: maxAgeDays=null disables the age gate (60d-old loads)", 
     const { logger, warnings } = makeCapturingLogger()
     const loaded = await loadSessionState(sessionID, logger, null)
 
-    assert.ok(
-        loaded,
-        "with maxAgeDays=null the age gate is skipped and stale state still loads",
-    )
+    assert.ok(loaded, "with maxAgeDays=null the age gate is skipped and stale state still loads")
     assert.ok(
         !warnings.some((message) => /stateMaxAgeDays/.test(message)),
         "no age-related warning expected when the gate is disabled",
@@ -215,10 +204,7 @@ test("loadSessionState: missing lastUpdated loads (paranoia — unparsable times
     const { logger, warnings } = makeCapturingLogger()
     const loaded = await loadSessionState(sessionID, logger, 30)
 
-    assert.ok(
-        loaded,
-        "missing lastUpdated must not trigger the age gate; the check is opt-in",
-    )
+    assert.ok(loaded, "missing lastUpdated must not trigger the age gate; the check is opt-in")
     assert.ok(
         !warnings.some((message) => /stateMaxAgeDays/.test(message)),
         "no age-related warning expected for a missing lastUpdated field",
@@ -226,3 +212,7 @@ test("loadSessionState: missing lastUpdated loads (paranoia — unparsable times
 
     rmSync(join(STORAGE_DIR, `${sessionID}.json`), { force: true })
 })
+// Logic Verified: loadSessionState drops state older than the configured maxAgeDays (strict greater-than), loads fresh state within the window, treats null maxAgeDays as disabled, and tolerates missing lastUpdated.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

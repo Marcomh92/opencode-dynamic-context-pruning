@@ -4,7 +4,7 @@ import type { CachedSubAgentResult } from "../state/types"
  *  Defensive against future callID reuse across different subagent sessions.
  *  ponytail: trivial pure helper; no IO. */
 export function buildSubAgentCacheKey(subAgentSessionId: string, callID: string): string {
-    return `${subAgentSessionId}::${callID}`
+    return `${subAgentSessionId.length}\x00${subAgentSessionId}\x00${callID.length}\x00${callID}`
 }
 
 /** Older-wins write semantic for the subagent result cache (issue #595).

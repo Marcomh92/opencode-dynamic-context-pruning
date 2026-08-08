@@ -13,6 +13,7 @@ export function loadConfig(api: TuiApi): PluginConfig {
         client: api.client,
         directory: api.state.path.directory,
         worktree: api.state.path.worktree,
+        // ponytail: TUI's `api` shape differs from `PluginInput`; the cast bridges the seam for the standalone TUI process. Drop when the TUI plugin type aligns with `PluginInput`.
     } as any)
 }
 
@@ -53,21 +54,18 @@ export async function buildSessionState(
 
         // v2 fields: loadSessionState has already enforced the schema-version
         // gate; any persisted file reaching here is a valid v2 file.
+        //
+        // BUG-031: recoveryForced + streak counters are intentionally NOT
+        // restored here — they are session-local recovery protocol state that
+        // resets on every session load. See lib/state/persistence.ts and
+        // docs/features/STATE_PERSISTENCE.md.
         if (typeof persisted.userForced === "boolean") {
             state.userForced = persisted.userForced
         }
-        if (typeof persisted.recoveryForced === "boolean") {
-            state.recoveryForced = persisted.recoveryForced
-        }
-        if (typeof persisted.nonCompactingRunCount === "number") {
-            state.nonCompactingRunCount = persisted.nonCompactingRunCount
-        }
-        if (typeof persisted.recoveryFadeCounter === "number") {
-            state.recoveryFadeCounter = persisted.recoveryFadeCounter
-        }
 
-        // Re-derive the manualMode cache from the now-merged flags.
-        state.manualMode = state.userForced || state.recoveryForced ? "active" : false
+        // Re-derive the manualMode cache from the user-driven flag only;
+        // recoveryForced defaults to false on a fresh session-local load.
+        state.manualMode = state.userForced ? "active" : false
 
         state.prune.tools = loadPruneMap(persisted.prune.tools)
         state.prune.messages = loadPruneMessagesState(persisted.prune.messages)
@@ -83,11 +81,24 @@ export async function buildSessionState(
     return state
 }
 
+// ponytail: per-session sidecar cache. `state` is cached for SIDECAR_TTL_MS so
+// rapid modal open/close cycles don't hit disk; `messages` is host state and
+// changes on every assistant turn, so it stays fresh. Bounded by # active
+// sessions; no eviction needed. BUG-080.
+const sidecarCache = new Map<string, { state: SessionState; expiresAt: number }>()
+const SIDECAR_TTL_MS = 5000
+
 export async function loadSessionData(api: TuiApi, config: PluginConfig) {
     const sessionID = activeSessionID(api)
     if (!sessionID) return undefined
 
     const messages = sessionMessages(api, sessionID)
+    const cached = sidecarCache.get(sessionID)
+    if (cached && cached.expiresAt > Date.now()) {
+        return { state: cached.state, messages }
+    }
+
     const state = await buildSessionState(sessionID, messages, config)
+    sidecarCache.set(sessionID, { state, expiresAt: Date.now() + SIDECAR_TTL_MS })
     return { state, messages }
 }

@@ -39,10 +39,10 @@ The feature extends the compress tool's description string with a "Loose Compres
 1. **Plugin-side matching (synthetic header only).** For each tool part in the compressed range whose `state.input` contains a `filePath` matching a glob in `compress.looseCompressionPatterns`, the plugin records the matched paths and (after the agent returns the summary) prepends a single header line listing them.
 2. **Agent-side matching (loss-aware compression).** The agent reads the "Loose Compression" section of the description and applies per-pattern instructions to file reads it identifies in the compressed range.
 3. **Synthetic header injected** at the top of the summary block:
-   ```
-   Loose-compressed: <path1.md>, <path2.md>. These files were loss-aware-compressed; consider re-reading if a heavily-summarized section is needed.
-   ```
-   One header per compress call (not per file). If multiple files matched, they're listed comma-separated. The header is appended by the plugin after the model returns the summary; the model does not write it.
+    ```
+    Loose-compressed: <path1.md>, <path2.md>. These files were loss-aware-compressed; consider re-reading if a heavily-summarized section is needed.
+    ```
+    One header per compress call (not per file). If multiple files matched, they're listed comma-separated. The header is appended by the plugin after the model returns the summary; the model does not write it.
 4. **Plugin-side precedence enforcement.** Loose-matched tool parts are excluded from `appendProtectedTools`'s full-output-append path (`lib/compress/protected-content.ts:106-196`) at the `isToolProtected` gate (`:130-137`). This guarantees loose compression wins over `protectedFilePatterns` — the agent doesn't see the file content verbatim-appended on top of its own summary.
 
 ### Config shape
@@ -52,9 +52,9 @@ The feature extends the compress tool's description string with a "Loose Compres
     "compress": {
         "looseCompressionPatterns": {
             "**/plans/**/*.md": "Preserve all step numbers and their ordering. Preserve explicit constraints and prerequisites. Compress explanatory prose.",
-            "**/docs/**/*.md":    "Preserve API signatures, config key names, and code identifiers. Compress introductory prose; preserve everything after the first heading."
-        }
-    }
+            "**/docs/**/*.md": "Preserve API signatures, config key names, and code identifiers. Compress introductory prose; preserve everything after the first heading.",
+        },
+    },
 }
 ```
 
@@ -81,31 +81,31 @@ The "Loose Compression" section of the description instructs the agent:
 
 **Key code anchors:**
 
-| Anchor | What it is |
-|---|---|
-| `lib/prompts/compress-message.ts:1-43` | Static summary prompt (description source) |
-| `lib/prompts/compress-range.ts` | Sibling prompt for range-mode compress |
-| `lib/compress/message.ts:50` | Tool description construction (registration-time) — the injection point |
-| `lib/compress/range.ts:63` | Same for range mode |
-| `lib/prompts/extensions/tool.ts` | `MESSAGE_FORMAT_EXTENSION` — append-precedent for tool descriptions |
-| `lib/compress/protected-content.ts:106-196` | `appendProtectedTools` — needs suppression gate at `:130-137` |
-| `lib/protected-patterns.ts:61-99` | `getFilePathsFromParameters` — extracts paths from tool input |
-| `lib/protected-patterns.ts:101-106` | `isFilePathProtected` — glob match |
-| `lib/config.ts:120-139, 356-643, 787-805, 948-982, 1054-1059` | Full 6-site pattern for adding a compress.* key |
-| `lib/config.ts:157` | `getConfigKeyPaths` special-case precedent (`modelMaxLimits`) for object-valued keys |
-| `dcp.schema.json:131-302` | Existing compress.* schema block (clone entry) |
+| Anchor                                                        | What it is                                                                           |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `lib/prompts/compress-message.ts:1-43`                        | Static summary prompt (description source)                                           |
+| `lib/prompts/compress-range.ts`                               | Sibling prompt for range-mode compress                                               |
+| `lib/compress/message.ts:50`                                  | Tool description construction (registration-time) — the injection point              |
+| `lib/compress/range.ts:63`                                    | Same for range mode                                                                  |
+| `lib/prompts/extensions/tool.ts`                              | `MESSAGE_FORMAT_EXTENSION` — append-precedent for tool descriptions                  |
+| `lib/compress/protected-content.ts:106-196`                   | `appendProtectedTools` — needs suppression gate at `:130-137`                        |
+| `lib/protected-patterns.ts:61-99`                             | `getFilePathsFromParameters` — extracts paths from tool input                        |
+| `lib/protected-patterns.ts:101-106`                           | `isFilePathProtected` — glob match                                                   |
+| `lib/config.ts:120-139, 356-643, 787-805, 948-982, 1054-1059` | Full 6-site pattern for adding a compress.\* key                                     |
+| `lib/config.ts:157`                                           | `getConfigKeyPaths` special-case precedent (`modelMaxLimits`) for object-valued keys |
+| `dcp.schema.json:131-302`                                     | Existing compress.\* schema block (clone entry)                                      |
 
 **Implementation sketch:**
 
 1. New config key + schema entry + merge helper (~30 lines, including the `getConfigKeyPaths` special case so user pattern keys aren't flagged as unknown).
 2. New module `lib/compress/loose-instructions.ts` exporting `buildLooseCompressionDescription(config): string`. Reads `compress.looseCompressionPatterns`, formats all patterns + instructions into a description appendix. Returns empty string if no patterns configured. ~30 lines.
 3. Append the returned string to the tool description in both `message.ts:50` and `range.ts:63`:
-   ```ts
-   description: runtimePrompts.compressMessage
-                + MESSAGE_FORMAT_EXTENSION
-                + buildLooseCompressionDescription(ctx.config)
-   ```
-   ~5 lines.
+    ```ts
+    description: runtimePrompts.compressMessage +
+        MESSAGE_FORMAT_EXTENSION +
+        buildLooseCompressionDescription(ctx.config)
+    ```
+    ~5 lines.
 4. Plugin-side precedence suppression: in `lib/compress/protected-content.ts:130-137`, add a second gate that excludes parts matching `compress.looseCompressionPatterns` from `isToolProtected = true`. This prevents `appendProtectedTools` from appending the full output on top of the agent's loose-compressed summary. ~15 lines.
 5. Plugin-side synthetic header: in the same compress tool paths (`message.ts` post-hoc, `range.ts` post-hoc), collect matched paths from `plan.selection` and prepend one header line listing them. ~25 lines.
 6. Tests: pattern match (single + multi), no-match, empty config, precedence over `protectedFilePatterns` (assert `appendProtectedTools` is NOT called with loose-matched parts), synthetic header content, description content (assert registered tool description contains expected pattern strings). ~100 lines.
@@ -113,6 +113,7 @@ The "Loose Compression" section of the description instructs the agent:
 **Total estimate:** ~200 lines. Fork bumps to **3.1.18** (patch).
 
 **Trade-offs:**
+
 - ✓ Cheap. Few new code paths.
 - ✓ Reuses existing `MESSAGE_FORMAT_EXTENSION` precedent.
 - ✓ Per-pattern instruction lets users tune behavior to document type.
@@ -127,7 +128,7 @@ The "Loose Compression" section of the description instructs the agent:
 
 The originally-proposed Option B ("plugin extracts markdown structural skeleton before the model sees the document") is **not implementable as written** — the only pre-model injection point is the static description (already used by Option A), and the per-tool-part chat-transform hook (`createChatMessageTransformHandler` in `lib/hooks.ts:108-173`) would mutate every matched document in the live context during normal work, which is a far bigger and riskier feature than described.
 
-A post-hoc variant — extract the skeleton after the agent returns its summary and append it to the summary block — would mirror `appendProtectedTools` (`lib/compress/protected-content.ts:106-196`) but **deterministically inflates `summaryTokens`** by the skeleton size, which interacts badly with the v2 `maxCompactionRatio` guard: a skeleton that is a large fraction of the original document triggers non-compacting runs and the `recoveryForced` path that this feature is meant to *avoid*.
+A post-hoc variant — extract the skeleton after the agent returns its summary and append it to the summary block — would mirror `appendProtectedTools` (`lib/compress/protected-content.ts:106-196`) but **deterministically inflates `summaryTokens`** by the skeleton size, which interacts badly with the v2 `maxCompactionRatio` guard: a skeleton that is a large fraction of the original document triggers non-compacting runs and the `recoveryForced` path that this feature is meant to _avoid_.
 
 **Decision:** Option B is **deferred** to a future major version (3.2.0+) where it can be designed against an actual mechanism. Option A at 3.1.18 is the ship target.
 
@@ -160,18 +161,18 @@ Before implementation, these open questions need resolution:
 
 ## File / module inventory (post-implementation, fork 3.1.18)
 
-| File | Status | Purpose |
-|---|---|---|
-| `lib/compress/loose-instructions.ts` | NEW | `buildLooseCompressionDescription(config)` helper |
-| `lib/compress/message.ts` | MODIFIED | Append loose description at `:50`; prepend synthetic header post-hoc |
-| `lib/compress/range.ts` | MODIFIED | Same |
-| `lib/compress/protected-content.ts` | MODIFIED | Precedence suppression at `:130-137`; exclusion of loose-matched parts |
-| `lib/config.ts` | MODIFIED | New key + merge + validation + `getConfigKeyPaths` special case |
-| `dcp.schema.json` | MODIFIED | New entry |
-| `tests/loose-compression.test.ts` | NEW | Unit + integration tests |
-| `MY_README.md` | MODIFIED | New section: "Loose Compression Patterns" |
-| `MY_CHANGELOG.md` | MODIFIED | New entry for 3.1.18 |
-| `MY_LOOSE_COMPRESSION.md` (this file) | MOVED to `docs/` | Final design doc |
+| File                                  | Status           | Purpose                                                                |
+| ------------------------------------- | ---------------- | ---------------------------------------------------------------------- |
+| `lib/compress/loose-instructions.ts`  | NEW              | `buildLooseCompressionDescription(config)` helper                      |
+| `lib/compress/message.ts`             | MODIFIED         | Append loose description at `:50`; prepend synthetic header post-hoc   |
+| `lib/compress/range.ts`               | MODIFIED         | Same                                                                   |
+| `lib/compress/protected-content.ts`   | MODIFIED         | Precedence suppression at `:130-137`; exclusion of loose-matched parts |
+| `lib/config.ts`                       | MODIFIED         | New key + merge + validation + `getConfigKeyPaths` special case        |
+| `dcp.schema.json`                     | MODIFIED         | New entry                                                              |
+| `tests/loose-compression.test.ts`     | NEW              | Unit + integration tests                                               |
+| `MY_README.md`                        | MODIFIED         | New section: "Loose Compression Patterns"                              |
+| `MY_CHANGELOG.md`                     | MODIFIED         | New entry for 3.1.18                                                   |
+| `MY_LOOSE_COMPRESSION.md` (this file) | MOVED to `docs/` | Final design doc                                                       |
 
 ---
 

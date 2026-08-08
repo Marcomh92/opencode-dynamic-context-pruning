@@ -70,6 +70,12 @@ const TOAST_SUMMARY_MAX_CHARS = 600
 // sessions would merge unrelated messages — cosmetic, not corruption.
 let inFlightDispatch: Promise<void> | null = null
 let pendingMergedMessages: string[] = []
+// ponytail: dedup window for identical sequential calls. A session that triggers compress every turn would
+// otherwise toast the same body 10 times in 2 seconds. Key includes the message body, not just the title
+// (all callers use the constant title "DCP: Compress Notification"). BUG-078.
+let lastDispatchKey = ""
+let lastDispatchAt = 0
+const TOAST_DEDUP_WINDOW_MS = 1000
 
 /** Resolves the configured notification type for the current host runtime.
  *  Forces `"toast"` on the OpenCode Desktop sidecar regardless of user config,
@@ -86,9 +92,21 @@ export function resolveEffectiveNotificationType(
 /**
  * Fires a toast. Coalesces synchronous bursts (the same JS tick) into a single
  * follow-up toast with merged content. Sequential awaited calls each fire
- * their own toast.
+ * their own toast, unless they fall within the dedup window for an identical
+ * title+message key.
  */
 export function dispatchToast(client: any, title: string, message: string): void {
+    const key = `${title}|${message}`
+    const now = Date.now()
+    if (key === lastDispatchKey && now - lastDispatchAt < TOAST_DEDUP_WINDOW_MS) {
+        // ponytail: identical notification within the dedup window — drop.
+        // Surfacing a "+N suppressed" counter here would require a second
+        // channel; out of scope for BUG-078. Add when the user complains.
+        return
+    }
+    lastDispatchKey = key
+    lastDispatchAt = now
+
     if (inFlightDispatch) {
         pendingMergedMessages.push(message)
         return

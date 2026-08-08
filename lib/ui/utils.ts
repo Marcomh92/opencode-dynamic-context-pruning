@@ -196,10 +196,10 @@ export function cacheSystemPromptTokens(state: SessionState, messages: WithParts
         if (msg.info.role !== "assistant") {
             continue
         }
-        const info = msg.info as any
-        const input = info?.tokens?.input || 0
-        const cacheRead = info?.tokens?.cache?.read || 0
-        const cacheWrite = info?.tokens?.cache?.write || 0
+        const info = msg.info
+        const input = info.tokens?.input || 0
+        const cacheRead = info.tokens?.cache?.read || 0
+        const cacheWrite = info.tokens?.cache?.write || 0
         if (input > 0 || cacheRead > 0 || cacheWrite > 0) {
             firstInputTokens = input + cacheRead + cacheWrite
             break
@@ -218,7 +218,7 @@ export function cacheSystemPromptTokens(state: SessionState, messages: WithParts
         }
         const parts = Array.isArray(msg.parts) ? msg.parts : []
         for (const part of parts) {
-            if (part.type === "text" && !(part as any).ignored) {
+            if (part.type === "text" && !part.ignored) {
                 firstUserText += part.text
             }
         }

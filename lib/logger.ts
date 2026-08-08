@@ -11,9 +11,25 @@ export class Logger {
     // payload per session so a transform-hook fire with no real change skips
     // the disk write entirely. Module-level Map is shared across Logger
     // instances inside one process — the fork constructs one Logger per
-    // session, so the key is sessionId. ponytail: unbounded by design; each
-    // entry is ~64 bytes of hash + a string key. Cap only if observed.
+    // session, so the key is sessionId. BUG-046/069: cap at 500 entries
+    // with FIFO eviction so long-lived TUI/desktop sidecars do not grow
+    // this map linearly with session count over the process lifetime.
+    // ponytail: FIFO over LRU — the change-detection only needs the most
+    // recent hash, so re-insertion is cheap. Upgrade to LRU if hot sessions
+    // churn and the cap starts evicting them.
     private static lastMinimizedHashBySession = new Map<string, string>()
+    private static lastMinimizedHashOrder: string[] = []
+    private static readonly HASH_CACHE_CAP = 500
+    // ponytail: process-local sequence prevents same-millisecond collisions; add cross-process coordination only if dump writers multiply.
+    private static saveContextSequence = 0
+    // BUG-044: per-session write timestamp — gates saveContext behind a real
+    // rate-limit so content churn (synthetic timestamps, nudges, message-ids)
+    // does not produce one disk write per transform fire. The change-detection
+    // hash above still short-circuits exact-match fires; this gate kicks in
+    // for distinct payloads in rapid succession. ponytail: 60s ceiling —
+    // transform fires within the window dedupe; add per-fire cache eviction
+    // only if the session count ever causes the map to grow unbounded.
+    private static lastWriteMsBySession = new Map<string, number>()
 
     constructor(enabled: boolean) {
         this.enabled = enabled
@@ -52,22 +68,47 @@ export class Logger {
         return parts.join(" ")
     }
 
-    private getCallerFile(skipFrames: number = 3): string {
-        const originalPrepareStackTrace = Error.prepareStackTrace
-        try {
-            const err = new Error()
-            Error.prepareStackTrace = (_, stack) => stack
-            const stack = err.stack as unknown as NodeJS.CallSite[]
-            Error.prepareStackTrace = originalPrepareStackTrace
+    // ponytail: amortised call-site cache keyed by `file:line`. The same call
+    // site (e.g., a tight loop calling logger.info 100x) hits the cache after
+    // the first stack parse — no prepareStackTrace swap, no CallSite array.
+    // BUG-036: 100 log calls previously triggered 100 stack walks AND 100
+    // global prepareStackTrace swaps; now they trigger 1 of each (just the
+    // string stack parse). Cap at 256 entries to bound memory in long-lived
+    // processes that churn through distinct call sites.
+    private static callerFileCache = new Map<string, string>()
+    private static callerFileCacheOrder: string[] = []
+    private static readonly CALLER_CACHE_CAP = 256
 
-            // Skip specified number of frames to get to actual caller
-            for (let i = skipFrames; i < stack.length; i++) {
-                const filename = stack[i]?.getFileName()
-                if (filename && !filename.includes("/logger.")) {
-                    // Extract just the filename without path and extension
-                    const match = filename.match(/([^/\\]+)\.[tj]s$/)
-                    return match ? match[1] : filename
+    private getCallerFile(skipFrames: number = 3): string {
+        try {
+            // Parse the string-form stack (default behaviour, no
+            // prepareStackTrace swap required). Format per frame is
+            // `    at <func> (<file>:<line>:<col>)`. We extract the first
+            // non-logger frame after `skipFrames` skips.
+            const stackStr = new Error().stack ?? ""
+            const lines = stackStr.split("\n")
+            for (let i = skipFrames; i < lines.length; i++) {
+                const line = lines[i]
+                const m = line.match(/\((.+?):(\d+):\d+\)/)
+                if (!m) continue
+                const filename = m[1]
+                if (!filename || filename.includes("/logger.")) continue
+
+                const lineno = m[2]
+                const cacheKey = `${filename}:${lineno}`
+                const cached = Logger.callerFileCache.get(cacheKey)
+                if (cached !== undefined) return cached
+
+                const fileMatch = filename.match(/([^/\\]+)\.[tj]s$/)
+                const component = fileMatch ? fileMatch[1] : filename
+
+                if (Logger.callerFileCache.size >= Logger.CALLER_CACHE_CAP) {
+                    const evict = Logger.callerFileCacheOrder.shift()
+                    if (evict !== undefined) Logger.callerFileCache.delete(evict)
                 }
+                Logger.callerFileCache.set(cacheKey, component)
+                Logger.callerFileCacheOrder.push(cacheKey)
+                return component
             }
             return "unknown"
         } catch {
@@ -115,10 +156,7 @@ export class Logger {
                 await mkdir(diagDir, { recursive: true })
             }
             const today = new Date().toISOString().split("T")[0]
-            const sessionShort = ((event.sessionId as string | null) || "unknown").substring(
-                0,
-                16,
-            )
+            const sessionShort = ((event.sessionId as string | null) || "unknown").substring(0, 16)
             const diagFile = join(diagDir, `${today}-${sessionShort}.jsonl`)
             await appendFile(diagFile, JSON.stringify(event) + "\n")
         } catch {
@@ -242,6 +280,15 @@ export class Logger {
     async saveContext(sessionId: string, messages: any[]) {
         if (!this.enabled) return
 
+        // BUG-044: per-session write rate-limit. Bounds disk writes when the
+        // payload churns every fire (synthetic timestamps, nudges, message-ids).
+        // The change-detection hash check below still short-circuits exact-match
+        // fires; this gate catches the churn case where every fire is unique.
+        const lastWriteMs = Logger.lastWriteMsBySession.get(sessionId) ?? 0
+        if (lastWriteMs !== 0 && Date.now() - lastWriteMs < 60_000) {
+            return
+        }
+
         try {
             const minimized = this.minimizeForDebug(messages).filter(
                 (msg) => msg.parts && msg.parts.length > 0,
@@ -263,14 +310,23 @@ export class Logger {
                 return
             }
             Logger.lastMinimizedHashBySession.set(sessionId, hash)
+            Logger.lastMinimizedHashOrder.push(sessionId)
+            if (Logger.lastMinimizedHashBySession.size > Logger.HASH_CACHE_CAP) {
+                const evict = Logger.lastMinimizedHashOrder.shift()
+                if (evict !== undefined) Logger.lastMinimizedHashBySession.delete(evict)
+            }
 
             const contextDir = join(this.logDir, "context", sessionId)
             if (!existsSync(contextDir)) {
                 await mkdir(contextDir, { recursive: true })
             }
             const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
-            const contextFile = join(contextDir, `${timestamp}.json`)
+            const contextFile = join(
+                contextDir,
+                `${timestamp}-${++Logger.saveContextSequence}.json`,
+            )
             await writeFile(contextFile, `${payload}\n`)
+            Logger.lastWriteMsBySession.set(sessionId, Date.now())
         } catch (error) {}
     }
 
@@ -281,5 +337,6 @@ export class Logger {
      *  cannot derive fresh sessionIds per case. */
     static clearSaveContextCache(): void {
         Logger.lastMinimizedHashBySession.clear()
+        Logger.lastWriteMsBySession.clear()
     }
 }

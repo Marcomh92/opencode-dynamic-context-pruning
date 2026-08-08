@@ -457,3 +457,7 @@ test("validator-wiring: message tool accepts when messageId > previous block's e
     // Exactly one new block on top of the seeded one.
     assert.equal(state.prune.messages.blocksById.size, 2)
 })
+// Logic Verified: compress tool validators reject startId>endId, endId not in context, endId ≤ previous block, and accept the first compress / strictly greater endId.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

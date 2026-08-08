@@ -117,3 +117,7 @@ test("compress range continues by appending required block summaries the model o
     assert.match(finalSummary.expandedSummary, /Recovered compressed summary/)
     assert.deepEqual(finalSummary.consumedBlockIds, [1])
 })
+// Logic Verified: range tool validates placeholders, ignores invalid ones, and continues by appending required block summaries the model omitted.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

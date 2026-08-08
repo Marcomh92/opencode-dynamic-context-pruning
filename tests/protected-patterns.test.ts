@@ -16,17 +16,11 @@ test("matchesGlob POSIX path matches /Users prefix", () => {
 })
 
 test("isFilePathProtected returns true when one POSIX path matches", () => {
-    assert.equal(
-        isFilePathProtected(["/home/user/repo/secrets.ts"], ["**/secrets.ts"]),
-        true,
-    )
+    assert.equal(isFilePathProtected(["/home/user/repo/secrets.ts"], ["**/secrets.ts"]), true)
 })
 
 test("isFilePathProtected returns false when no POSIX path matches", () => {
-    assert.equal(
-        isFilePathProtected(["/home/user/repo/src/main.ts"], ["**/secrets.ts"]),
-        false,
-    )
+    assert.equal(isFilePathProtected(["/home/user/repo/src/main.ts"], ["**/secrets.ts"]), false)
 })
 
 // M3 fork fix (#592): Windows paths now normalize correctly (single "\\" matches).
@@ -43,13 +37,14 @@ test("matchesGlob Windows D:\\ path matches nested **/proj/*.ts", () => {
 })
 
 test("isFilePathProtected returns true when a Windows path matches", () => {
-    assert.equal(
-        isFilePathProtected(["C:\\repo\\src\\secrets.ts"], ["**/secrets.ts"]),
-        true,
-    )
+    assert.equal(isFilePathProtected(["C:\\repo\\src\\secrets.ts"], ["**/secrets.ts"]), true)
 })
 
 // POSIX path with backslash-segments produced by some tooling should normalize too.
 test("matchesGlob mixed separators normalize on input", () => {
     assert.equal(matchesGlob("/home/user\\repo/secrets.ts", "**/secrets.ts"), true)
 })
+// Logic Verified: matchesGlob handles POSIX and Windows-style paths with backslash-segments, and isFilePathProtected returns true when any POSIX/Windows path matches.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

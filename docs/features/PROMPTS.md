@@ -6,25 +6,25 @@ Prompt layering, override behavior, and the runtime-only extensions. The system 
 
 `PROMPT_KEYS` in `lib/prompts/store.ts`:
 
-| Key | Bundled default | Source |
-|---|---|---|
-| `system` | `lib/prompts/system.ts` | `SYSTEM` |
-| `compress-range` | `lib/prompts/compress-range.ts` | `COMPRESS_RANGE` |
-| `compress-message` | `lib/prompts/compress-message.ts` | `COMPRESS_MESSAGE` |
+| Key                   | Bundled default                      | Source                |
+| --------------------- | ------------------------------------ | --------------------- |
+| `system`              | `lib/prompts/system.ts`              | `SYSTEM`              |
+| `compress-range`      | `lib/prompts/compress-range.ts`      | `COMPRESS_RANGE`      |
+| `compress-message`    | `lib/prompts/compress-message.ts`    | `COMPRESS_MESSAGE`    |
 | `context-limit-nudge` | `lib/prompts/context-limit-nudge.ts` | `CONTEXT_LIMIT_NUDGE` |
-| `turn-nudge` | `lib/prompts/turn-nudge.ts` | `TURN_NUDGE` |
-| `iteration-nudge` | `lib/prompts/iteration-nudge.ts` | `ITERATION_NUDGE` |
+| `turn-nudge`          | `lib/prompts/turn-nudge.ts`          | `TURN_NUDGE`          |
+| `iteration-nudge`     | `lib/prompts/iteration-nudge.ts`     | `ITERATION_NUDGE`     |
 
 ## Override paths
 
 `PromptPaths` defines four directories:
 
-| Tier | Path |
-|---|---|
-| global | `$XDG_CONFIG_HOME/opencode/dcp-prompts/overrides/` |
-| configDir | `$OPENCODE_CONFIG_DIR/dcp-prompts/overrides/` |
-| project | `<projectRoot>/.opencode/dcp-prompts/overrides/` |
-| defaults | built-in |
+| Tier      | Path                                               |
+| --------- | -------------------------------------------------- |
+| global    | `$XDG_CONFIG_HOME/opencode/dcp-prompts/overrides/` |
+| configDir | `$OPENCODE_CONFIG_DIR/dcp-prompts/overrides/`      |
+| project   | `<projectRoot>/.opencode/dcp-prompts/overrides/`   |
+| defaults  | built-in                                           |
 
 Override precedence is project > configDir > global. Defaults are written to disk only when `experimental.customPrompts` is enabled.
 
@@ -32,15 +32,15 @@ Override precedence is project > configDir > global. Defaults are written to dis
 
 `lib/prompts/extensions/*` holds content the user cannot override:
 
-| Extension | Source | Appended by |
-|---|---|---|
-| `MANUAL_MODE_SYSTEM_EXTENSION` | `extensions/system.ts` | `renderSystemPrompt` when `state.manualMode` |
-| `SUBAGENT_SYSTEM_EXTENSION` | `extensions/system.ts` | `renderSystemPrompt` when `state.isSubAgent` |
-| `buildProtectedToolsExtension(protectedTools)` | `extensions/system.ts` | `renderSystemPrompt` always |
-| `RANGE_FORMAT_EXTENSION` | `extensions/tool.ts` | tool description for range mode |
-| `MESSAGE_FORMAT_EXTENSION` | `extensions/tool.ts` | tool description for message mode |
-| `buildCompressedBlockGuidance` | `extensions/nudge.ts` | `appendGuidanceToDcpTag` |
-| `renderMessagePriorityGuidance` | `extensions/nudge.ts` | `appendGuidanceToDcpTag` |
+| Extension                                      | Source                 | Appended by                                  |
+| ---------------------------------------------- | ---------------------- | -------------------------------------------- |
+| `MANUAL_MODE_SYSTEM_EXTENSION`                 | `extensions/system.ts` | `renderSystemPrompt` when `state.manualMode` |
+| `SUBAGENT_SYSTEM_EXTENSION`                    | `extensions/system.ts` | `renderSystemPrompt` when `state.isSubAgent` |
+| `buildProtectedToolsExtension(protectedTools)` | `extensions/system.ts` | `renderSystemPrompt` always                  |
+| `RANGE_FORMAT_EXTENSION`                       | `extensions/tool.ts`   | tool description for range mode              |
+| `MESSAGE_FORMAT_EXTENSION`                     | `extensions/tool.ts`   | tool description for message mode            |
+| `buildCompressedBlockGuidance`                 | `extensions/nudge.ts`  | `appendGuidanceToDcpTag`                     |
+| `renderMessagePriorityGuidance`                | `extensions/nudge.ts`  | `appendGuidanceToDcpTag`                     |
 
 `RANGE_FORMAT_EXTENSION` and `MESSAGE_FORMAT_EXTENSION` are explicitly kept out of the override set so they cannot be modified independently of the tool's input validation. See `DPP-015`.
 

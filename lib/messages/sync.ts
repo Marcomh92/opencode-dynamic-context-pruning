@@ -1,5 +1,6 @@
 import type { SessionState, WithParts } from "../state"
 import type { Logger } from "../logger"
+import { evictMessageRefsForBlock } from "../message-ids"
 
 function sortBlocksByCreation(
     a: { createdAt: number; blockId: number },
@@ -34,6 +35,7 @@ export const syncCompressionBlocks = (
 
     const now = Date.now()
     const missingOriginBlockIds: number[] = []
+    const deactivatedBlockIds: number[] = []
     const orderedBlocks = Array.from(messagesState.blocksById.values()).sort(sortBlocksByCreation)
 
     for (const block of orderedBlocks) {
@@ -47,6 +49,7 @@ export const syncCompressionBlocks = (
             block.deactivatedAt = now
             block.deactivatedByBlockId = undefined
             missingOriginBlockIds.push(block.blockId)
+            deactivatedBlockIds.push(block.blockId)
             continue
         }
 
@@ -56,6 +59,7 @@ export const syncCompressionBlocks = (
                 block.deactivatedAt = now
             }
             block.deactivatedByBlockId = undefined
+            deactivatedBlockIds.push(block.blockId)
             continue
         }
 
@@ -76,6 +80,7 @@ export const syncCompressionBlocks = (
                 if (mappedBlockId === consumedBlock.blockId) {
                     messagesState.activeByAnchorMessageId.delete(consumedBlock.anchorMessageId)
                 }
+                deactivatedBlockIds.push(consumedBlock.blockId)
             }
 
             messagesState.activeBlockIds.delete(consumedBlockId)
@@ -88,6 +93,13 @@ export const syncCompressionBlocks = (
         if (messageIds.has(block.anchorMessageId)) {
             messagesState.activeByAnchorMessageId.set(block.anchorMessageId, block.blockId)
         }
+    }
+
+    // BUG-025: reclaim m-NNNN refs for messages whose sole active block has
+    // just been deactivated. Must run BEFORE the `byMessageId` filter loop so
+    // `entry.activeBlockIds` still reflects pre-sync coverage.
+    for (const blockId of deactivatedBlockIds) {
+        evictMessageRefsForBlock(state, blockId, logger)
     }
 
     for (const entry of messagesState.byMessageId.values()) {

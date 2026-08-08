@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, realpathSync } from "fs"
 import { join, dirname } from "path"
 import { homedir } from "os"
+import { createHash } from "node:crypto"
 import type { Logger } from "../logger"
 import { SYSTEM as SYSTEM_PROMPT } from "./system"
 import { COMPRESS_RANGE as COMPRESS_RANGE_PROMPT } from "./compress-range"
@@ -132,9 +133,33 @@ const BUNDLED_EDITABLE_PROMPTS: Record<EditablePromptField, string> = {
     iterationNudge: ITERATION_NUDGE,
 }
 
+// BUG-077: stable SHA-256 over the bundled source so operators can correlate
+// a defaults-dir rewrite to the exact bundled version that produced it.
+// ponytail: computed once at module load — bundled sources are constants
+// so the hash never changes across constructions. Object key order is
+// insertion order (deterministic for string keys), so JSON.stringify is
+// canonical here.
+const BUNDLED_PROMPTS_HASH = createHash("sha256")
+    .update(JSON.stringify(BUNDLED_EDITABLE_PROMPTS))
+    .digest("hex")
+
 const INTERNAL_PROMPT_EXTENSIONS = {
     manualExtension: MANUAL_MODE_SYSTEM_EXTENSION,
     subagentExtension: SUBAGENT_SYSTEM_EXTENSION,
+}
+
+// ponytail: defensive invariant; runs once at module load. DPP-015 forbids
+// user-overridable prompt keys from colliding with runtime extensions — a
+// collision would let a user's override silently clobber plugin behaviour.
+// BUG-082.
+for (const extKey of Object.keys(INTERNAL_PROMPT_EXTENSIONS) as Array<
+    keyof typeof INTERNAL_PROMPT_EXTENSIONS
+>) {
+    if ((PROMPT_KEYS as readonly string[]).includes(extKey)) {
+        throw new Error(
+            `INTERNAL_PROMPT_EXTENSIONS key '${extKey}' collides with PROMPT_KEYS; runtime extensions must be disjoint from user-overridable keys (DPP-015)`,
+        )
+    }
 }
 
 function createBundledRuntimePrompts(): RuntimePrompts {
@@ -152,7 +177,7 @@ function createBundledRuntimePrompts(): RuntimePrompts {
 
 function findOpencodeDir(startDir: string): string | null {
     let current = startDir
-    while (current !== "/") {
+    while (true) {
         const candidate = join(current, ".opencode")
         if (existsSync(candidate)) {
             try {
@@ -164,6 +189,11 @@ function findOpencodeDir(startDir: string): string | null {
             }
         }
         const parent = dirname(current)
+        // ponytail: universal termination — `parent === current` is the sole
+        // root guard (works on POSIX `/` and Windows `C:\`). The previous
+        // loop header compared `current` to the POSIX root path, which is
+        // always true on Windows; the loop only ended via this secondary
+        // break. BUG-016.
         if (parent === current) {
             break
         }
@@ -229,11 +259,17 @@ function normalizeReminderPromptContent(content: string): string {
 }
 
 function stripPromptComments(content: string): string {
-    return content
-        .replace(/^\uFEFF/, "")
-        .replace(/\r\n?/g, "\n")
-        .replace(HTML_COMMENT_REGEX, "")
-        .replace(LEGACY_INLINE_COMMENT_LINE_REGEX, "")
+    return (
+        content
+            .replace(/^\uFEFF/, "")
+            .replace(/\r\n?/g, "\n")
+            .replace(HTML_COMMENT_REGEX, "")
+            .replace(LEGACY_INLINE_COMMENT_LINE_REGEX, "")
+            // ponytail: per-line trailing whitespace normalization. Cheap and
+            // cosmetic — `.trim()` on the whole content trims start/end but
+            // leaves trailing spaces/tabs on internal lines. BUG-072.
+            .replace(/[ \t]+$/gm, "")
+    )
 }
 
 function toEditablePromptText(definition: PromptDefinition, rawContent: string): string {
@@ -359,7 +395,19 @@ export class PromptStore {
             let effectiveValue = fallbackValue
 
             for (const candidate of this.getOverrideCandidates(definition.fileName)) {
-                const rawOverride = readFileIfExists(candidate.path)
+                // ponytail: resolve symlinks before reading so a symlink in the
+                // overrides dir cannot escape via a follow-on read. Broken
+                // symlinks are skipped silently — same contract as a missing
+                // file. BUG-079.
+                let resolvedPath = candidate.path
+                if (existsSync(candidate.path)) {
+                    try {
+                        resolvedPath = realpathSync(candidate.path)
+                    } catch {
+                        continue
+                    }
+                }
+                const rawOverride = readFileIfExists(resolvedPath)
                 if (rawOverride === null) {
                     continue
                 }
@@ -425,6 +473,14 @@ export class PromptStore {
             })
             return
         }
+
+        // BUG-077: emit the bundled-prompt hash once per construction so a
+        // defaults-dir rewrite is correlatable to the exact bundled version.
+        // Run before the write loop; the hash is stable across reloads.
+        this.logger.info("Initialized prompt defaults from bundled source", {
+            bundledPromptHash: BUNDLED_PROMPTS_HASH,
+            defaultsDir: this.paths.defaultsDir,
+        })
 
         for (const definition of PROMPT_DEFINITIONS) {
             const bundledEditable = toEditablePromptText(

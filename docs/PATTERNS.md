@@ -16,13 +16,13 @@ Format: a short statement of the ceiling, then a one-line "Add when ..." clause.
 
 ## PAT-002 — Single-writer rules
 
-| Surface | Single writer |
-|---|---|
-| New compression blocks | `applyCompressionState` (`lib/compress/state.ts`) |
-| Bulk block reconciliation | `syncCompressionBlocks` (`lib/messages/sync.ts`) |
-| Session persistence | `saveSessionState` / `coalesceSaveSessionState` (`lib/state/persistence.ts`) |
-| Subagent cache key | `buildSubAgentCacheKey` (`lib/subagents/cache-key.ts`) |
-| Manual-mode transient flag | `/dcp-compress` slash command handler |
+| Surface                    | Single writer                                                                |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| New compression blocks     | `applyCompressionState` (`lib/compress/state.ts`)                            |
+| Bulk block reconciliation  | `syncCompressionBlocks` (`lib/messages/sync.ts`)                             |
+| Session persistence        | `saveSessionState` / `coalesceSaveSessionState` (`lib/state/persistence.ts`) |
+| Subagent cache key         | `buildSubAgentCacheKey` (`lib/subagents/cache-key.ts`)                       |
+| Manual-mode transient flag | `/dcp-compress` slash command handler                                        |
 
 **Why.** Multiple writers that mutate the same shape converge to one canonical set of invariants. When adding side-effects, route them through the existing writer.
 
@@ -40,11 +40,11 @@ Format: a short statement of the ceiling, then a one-line "Add when ..." clause.
 
 ## PAT-005 — Soft issues vs hard errors
 
-| Tool | Behavior on bad arg |
-|---|---|
-| `compress` range mode | Throws hard `Error`. Range mode is all-or-nothing. |
-| `compress` message mode | Returns `SoftIssue` list and skips the bad message. |
-| Subagent cache miss | No-op; falls back to `part.state.output`. |
+| Tool                          | Behavior on bad arg                                                    |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| `compress` range mode         | Throws hard `Error`. Range mode is all-or-nothing.                     |
+| `compress` message mode       | Returns `SoftIssue` list and skips the bad message.                    |
+| Subagent cache miss           | No-op; falls back to `part.state.output`.                              |
 | `__DCP_MONOTONIC_VIOLATION__` | Thrown with a `validNextIds` hint; the agent can branch on the prefix. |
 
 **Why.** Range mode is contract-bound; message mode is per-item best-effort. The agent should know when a contract fails.
@@ -96,7 +96,9 @@ Tests that verify a contract close with a four-line audit trail:
 // Review Status: ...
 ```
 
-Currently used by `coalesce-save-session.test.ts`, `append-idempotency.test.ts`, `synthetic-user-message-stability.test.ts`. Treat the trailer as part of the test's spec.
+**Mandatory for every test file under `tests/`.** The last four non-blank lines of every `tests/*.test.ts` must match the canonical token order above. The contract is enforced by `tests/test-audit-trailers.test.ts` (self-excluded); a missing or reordered trailer fails the suite. See `tests/compress-message.test.ts:891-894` for a current example.
+
+**Why.** The trailer is the static audit trail that lets reviewers see what each test claimed to verify without re-deriving the rationale from the code. Treating it as part of the spec is what makes the audit enforceable.
 
 ## PAT-013 — Issue numbers in test names
 

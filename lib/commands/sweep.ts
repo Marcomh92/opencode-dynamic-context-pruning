@@ -168,13 +168,28 @@ export async function handleSweepCommand(ctx: SweepCommandContext): Promise<void
         }
     }
 
-    // Filter out already-pruned tools, protected tools, and protected file paths
+    // Filter out already-pruned tools, protected tools, and protected file paths.
+    // syncToolCache (lib/state/tool-cache.ts) honors turnProtection.enabled and
+    // skips caching tools within turnProtection.turns of the current turn —
+    // those tools have no entry in state.toolParameters, so the "no entry → keep"
+    // branch below would otherwise let sweep mark them. Mirror the same gate
+    // here. BUG-047.
+    const turnProtectionEnabled = config.turnProtection.enabled
+    const turnProtectionTurns = config.turnProtection.turns
+
     const newToolIds = toolIdsToSweep.filter((id) => {
         if (state.prune.tools.has(id)) {
             return false
         }
         const entry = state.toolParameters.get(id)
         if (!entry) {
+            // ponytail: conservative — skip when we have no metadata AND turn
+            // protection is active (syncToolCache skipped it for that reason).
+            // Pre-fix this branch always returned true, sweep-marking any tool
+            // whose entry was missing — including turn-protected ones.
+            if (turnProtectionEnabled && turnProtectionTurns > 0) {
+                return false
+            }
             return true
         }
         if (isToolNameProtected(entry.tool, protectedTools)) {

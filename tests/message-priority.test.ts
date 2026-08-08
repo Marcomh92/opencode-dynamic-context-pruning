@@ -914,3 +914,7 @@ test("injectMessageIds skips assistant with empty text part (issue #463)", () =>
         "empty text part should remain untouched",
     )
 })
+// Logic Verified: injectMessageIds injects into every tool output for range/message modes, marks compress tool messages high-priority, and nudge text excludes protected user messages.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

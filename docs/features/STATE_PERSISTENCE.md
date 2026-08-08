@@ -28,37 +28,37 @@ Required fields: `prune.tools` (object), `prune.messages` (object), `nudges` (ob
 
 ## Save contract
 
-| Step | Source |
-|---|---|
-| `flushPruneStats` before `JSON.stringify` | `lib/state/persistence.ts:121` |
-| Monotonic merge against existing file: `max(totalPruneTokens)` | `lib/state/persistence.ts:167-182` |
+| Step                                                                                           | Source                             |
+| ---------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `flushPruneStats` before `JSON.stringify`                                                      | `lib/state/persistence.ts:121`     |
+| Monotonic merge against existing file: `max(totalPruneTokens)`                                 | `lib/state/persistence.ts:167-182` |
 | `coalesceSaveSessionState` is the default; `saveSessionState` is the strong save-on-await path | `lib/state/persistence.ts:193-227` |
 
 A residual cross-process race is acknowledged in the source: TUI and Desktop sidecars in two processes are not coordinated. The in-process coalescer + monotonic merge handle the common case.
 
 ## Persisted vs in-memory
 
-| Field | Persisted? | Notes |
-|---|---|---|
-| `manualMode`, `userForced`, `recoveryForced`, `nonCompactingRunCount`, `recoveryFadeCounter` | yes | |
-| `forkSchemaVersion` | yes | gate value |
-| `prune.tools`, `prune.messages` | yes | block graph and tool-replacement map |
-| `nudges.*` | yes | anchor lists |
-| `stats` | yes | totals; `pruneTokenCounter` is flushed before save |
-| `sessionName`, `lastUpdated` | yes | |
-| `subAgentResultCache` | no | rebuildable; see `DPP-018` |
-| `diagnostic` | no | fire counts, prefix hash, last fire timestamp |
-| `messageIds`, `toolParameters`, `modelContextLimit`, `systemPromptTokens`, `compressionTiming`, `pendingManualTrigger`, `currentTurn`, `lastCompaction` | no | request-local |
+| Field                                                                                                                                                   | Persisted? | Notes                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------- |
+| `manualMode`, `userForced`, `recoveryForced`, `nonCompactingRunCount`, `recoveryFadeCounter`                                                            | yes        |                                                    |
+| `forkSchemaVersion`                                                                                                                                     | yes        | gate value                                         |
+| `prune.tools`, `prune.messages`                                                                                                                         | yes        | block graph and tool-replacement map               |
+| `nudges.*`                                                                                                                                              | yes        | anchor lists                                       |
+| `stats`                                                                                                                                                 | yes        | totals; `pruneTokenCounter` is flushed before save |
+| `sessionName`, `lastUpdated`                                                                                                                            | yes        |                                                    |
+| `subAgentResultCache`                                                                                                                                   | no         | rebuildable; see `DPP-018`                         |
+| `diagnostic`                                                                                                                                            | no         | fire counts, prefix hash, last fire timestamp      |
+| `messageIds`, `toolParameters`, `modelContextLimit`, `systemPromptTokens`, `compressionTiming`, `pendingManualTrigger`, `currentTurn`, `lastCompaction` | no         | request-local                                      |
 
 On load, `recoveryForced` and the streak counters are **intentionally not restored from v1** state files. This is the v1→v2 boundary; new code must not assume they survive session reload.
 
 ## v2 protocol fields on `SessionState`
 
-| Field | Set by | Cleared by |
-|---|---|---|
-| `userForced` | `/dcp manual on`; successful manual compress | `/dcp manual off`; successful manual compress |
+| Field            | Set by                                                          | Cleared by                                                                           |
+| ---------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `userForced`     | `/dcp manual on`; successful manual compress                    | `/dcp manual off`; successful manual compress                                        |
 | `recoveryForced` | after `maxContextLimitRecovery` consecutive non-compacting runs | session restart; after `recoveryFadeWindow` consecutive successful manual compresses |
-| `manualMode` | derived cache from `userForced` and `recoveryForced` | derived only; updated by `effectiveManualMode` |
+| `manualMode`     | derived cache from `userForced` and `recoveryForced`            | derived only; updated by `effectiveManualMode`                                       |
 
 Autonomous compresses never clear `userForced`. `/dcp manual off` never clears `recoveryForced`. These rules are in `INV-8` of `docs/features/COMPRESSION.md`.
 

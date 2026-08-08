@@ -162,3 +162,7 @@ test("prompt store exposes bundled range-mode compress prompt", () => {
         fixture.cleanup()
     }
 })
+// Logic Verified: system prompt overrides handle reminder tags safely, normalize fully-wrapped overrides to a single runtime wrapper, reject malformed boundary wrappers, and store exposes the bundled message-mode compress prompt.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

@@ -5,7 +5,9 @@ export function isMessageWithInfo(message: unknown): message is WithParts {
         return false
     }
 
+    // ponytail: `message` is `unknown`; the cast reads the shape for runtime validation. The `isMessageWithInfo` return type narrows the union downstream, so this is the type guard's only escape hatch.
     const info = (message as any).info
+    // ponytail: same type-guard escape hatch as the `info` access above.
     const parts = (message as any).parts
     if (!info || typeof info !== "object") {
         return false

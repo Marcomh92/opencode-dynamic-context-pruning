@@ -51,9 +51,13 @@ export function serializePruneMessagesState(
     }
 }
 
+/** Determines whether a session has a parent subagent session, bounded by the SDK timeout. */
 export async function isSubAgentSession(client: any, sessionID: string): Promise<boolean> {
     try {
-        const result = await client.session.get({ path: { id: sessionID } })
+        const result = await client.session.get({
+            path: { id: sessionID },
+            signal: AbortSignal.timeout(2000),
+        })
         return !!result.data?.parentID
     } catch (error: any) {
         return false
@@ -328,6 +332,25 @@ export function getActiveSummaryTokenUsage(state: SessionState): number {
     return total
 }
 
+/** Effective manual-mode helper for the v2 protocol.
+ *  Returns "active" iff `userForced || recoveryForced`; otherwise `false`.
+ *
+ *  The legacy `state.manualMode` tri-state cache field is derived from
+ *  `userForced` (explicit user intent) and `recoveryForced` (auto-disable
+ *  after too many non-compacting runs) via this helper. The "compress-pending"
+ *  transient — set by `/dcp-compress` while the model still owes a compress
+ *  call — is owned by the slash-command handler and NEVER surfaces through
+ *  this helper; readers that need to detect the transient must check
+ *  `state.manualMode` directly.
+ *
+ *  ponytail: canonical implementation lives in `lib/compress/pipeline.ts`; this
+ *  is a re-export to keep the `../state/utils` import path working for
+ *  consumers that don't import from the pipeline directly (e.g.
+ *  `lib/commands/manual.ts`). Delete the re-export once those consumers
+ *  migrate to the canonical path.
+ */
+export { effectiveManualMode } from "../compress/pipeline"
+
 // M2.5c Fix 2 — centralised counter flush. The `pruneTokenCounter += x;
 // totalPruneTokens += pruneTokenCounter; pruneTokenCounter = 0` idiom was
 // duplicated at lib/compress/state.ts:258-260 and lib/commands/sweep.ts:229-231
@@ -375,7 +398,12 @@ export function syncPruneToolsFromActiveBlocks(state: SessionState): void {
         if (!activeToolIds.has(toolId)) state.prune.tools.delete(toolId)
     }
     for (const toolId of activeToolIds) {
-        if (state.prune.tools.has(toolId)) continue
+        // BUG-051: always re-read the tokenCount from toolParameters. The
+        // toolParameters entry can be evicted by trimToolParametersCache and
+        // re-populated later with a fresh tokenCount; a `has` short-circuit
+        // would leave the stale snapshot in place. Callers that need only the
+        // Set semantics should treat this Map as a Set (read .has / .keys
+        // only) — the value is best-effort, recomputed each sync.
         const entry = state.toolParameters.get(toolId)
         state.prune.tools.set(toolId, entry?.tokenCount ?? 0)
     }
@@ -395,4 +423,9 @@ export function resetOnCompaction(state: SessionState): void {
         turnNudgeAnchors: new Set<string>(),
         iterationNudgeAnchors: new Set<string>(),
     }
+    // BUG-059 — clear the pending manual trigger so a `/dcp-compress`
+    // invocation that interleaves with a compaction doesn't apply the
+    // manual-trigger prompt against content that has just been compacted
+    // away. Mirrors resetSessionState (lib/state/state.ts).
+    state.pendingManualTrigger = null
 }

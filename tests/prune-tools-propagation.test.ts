@@ -28,12 +28,22 @@ function buildConfig() {
         experimental: { allowSubAgents: false, customPrompts: false },
         protectedFilePatterns: [],
         compress: {
-            mode: "range", permission: "allow", showCompression: false,
-            maxContextLimit: 150000, minContextLimit: 50000, nudgeFrequency: 5,
-            iterationNudgeThreshold: 15, nudgeForce: "soft", protectedTools: [],
-            protectTags: false, protectUserMessages: false,
+            mode: "range",
+            permission: "allow",
+            showCompression: false,
+            maxContextLimit: 150000,
+            minContextLimit: 50000,
+            nudgeFrequency: 5,
+            iterationNudgeThreshold: 15,
+            nudgeForce: "soft",
+            protectedTools: [],
+            protectTags: false,
+            protectUserMessages: false,
         },
-        strategies: { deduplication: { enabled: true, protectedTools: [] }, purgeErrors: { enabled: true, turns: 4, protectedTools: [] } },
+        strategies: {
+            deduplication: { enabled: true, protectedTools: [] },
+            purgeErrors: { enabled: true, turns: 4, protectedTools: [] },
+        },
     } as any
 }
 
@@ -44,22 +54,54 @@ function messages(sessionID: string, offset = 0, callID = "call-direct"): WithPa
         const id = `msg-${sequence}`
         return {
             info: {
-                id, role: n % 2 ? "user" : "assistant", sessionID, agent: "assistant",
+                id,
+                role: n % 2 ? "user" : "assistant",
+                sessionID,
+                agent: "assistant",
                 ...(n % 2 ? { model: { providerID: "anthropic", modelID: "test" } } : {}),
                 time: { created: sequence },
             } as any,
-            parts: n === 2
-                ? [{ id: `tool-part-${sequence}`, messageID: id, sessionID, type: "tool", tool: "bash", callID, state: { status: "completed", input: {}, output } } as any]
-                : [{ id: `text-${sequence}`, messageID: id, sessionID, type: "text", text: `message ${sequence}` } as any],
+            parts:
+                n === 2
+                    ? [
+                          {
+                              id: `tool-part-${sequence}`,
+                              messageID: id,
+                              sessionID,
+                              type: "tool",
+                              tool: "bash",
+                              callID,
+                              state: { status: "completed", input: {}, output },
+                          } as any,
+                      ]
+                    : [
+                          {
+                              id: `text-${sequence}`,
+                              messageID: id,
+                              sessionID,
+                              type: "text",
+                              text: `message ${sequence}`,
+                          } as any,
+                      ],
         }
     })
 }
 
 function toolFor(state: SessionState, sessionID: string, rawMessages: WithParts[]) {
     return createCompressRangeTool({
-        client: { session: { messages: async () => ({ data: rawMessages }), get: async () => ({ data: { parentID: null } }) } },
-        state, logger: new Logger(false), config: buildConfig(),
-        prompts: { reload() {}, getRuntimePrompts: () => ({ compressRange: "", compressMessage: "" }) },
+        client: {
+            session: {
+                messages: async () => ({ data: rawMessages }),
+                get: async () => ({ data: { parentID: null } }),
+            },
+        },
+        state,
+        logger: new Logger(false),
+        config: buildConfig(),
+        prompts: {
+            reload() {},
+            getRuntimePrompts: () => ({ compressRange: "", compressMessage: "" }),
+        },
     } as any)
 }
 
@@ -73,17 +115,29 @@ async function compressWith(
     const tool = toolFor(state, sessionID, rawMessages)
     state.sessionId = sessionID
     state.isSubAgent = false
-    state.toolParameters.set(callID, { tool: "bash", parameters: {}, turn: offset + 1, tokenCount: offset + 321 })
+    state.toolParameters.set(callID, {
+        tool: "bash",
+        parameters: {},
+        turn: offset + 1,
+        tokenCount: offset + 321,
+    })
     await tool.execute(
         {
             topic: "tool propagation",
-            content: [{
-                startId: `m${String(offset + 1).padStart(4, "0")}`,
-                endId: `m${String(offset + 4).padStart(4, "0")}`,
-                summary: "Compressed tool output.",
-            }],
+            content: [
+                {
+                    startId: `m${String(offset + 1).padStart(4, "0")}`,
+                    endId: `m${String(offset + 4).padStart(4, "0")}`,
+                    summary: "Compressed tool output.",
+                },
+            ],
         },
-        { ask: async () => {}, metadata: () => {}, sessionID, messageID: `compress-message-${offset}` } as any,
+        {
+            ask: async () => {},
+            metadata: () => {},
+            sessionID,
+            messageID: `compress-message-${offset}`,
+        } as any,
     )
 }
 
@@ -119,3 +173,7 @@ test("sequential compression blocks preserve earlier tools while adding later to
     assert.equal(state.prune.tools.get("call-first"), 321)
     assert.equal(state.prune.tools.get("call-second"), 325)
 })
+// Logic Verified: compression propagates every direct tool ID into prune.tools with its token count, preserves earlier tools across sequential blocks, and does not overwrite a pre-pruned count.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

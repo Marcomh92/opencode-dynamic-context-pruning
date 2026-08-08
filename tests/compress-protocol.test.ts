@@ -67,10 +67,7 @@ function buildConfig(): PluginConfig {
     }
 }
 
-function buildToolContext(
-    state: SessionState,
-    config: PluginConfig = buildConfig(),
-): ToolContext {
+function buildToolContext(state: SessionState, config: PluginConfig = buildConfig()): ToolContext {
     return {
         client: {
             session: {
@@ -332,9 +329,7 @@ test("validateMonotonicEnd accepts strictly greater newStart and newEnd", () => 
     state.messageIds.byRef.set("m0501", "raw-id-501")
     state.messageIds.byRef.set("m0510", "raw-id-510")
 
-    assert.doesNotThrow(() =>
-        validateMonotonicEnd("m0500", "m0501", "m0510", state),
-    )
+    assert.doesNotThrow(() => validateMonotonicEnd("m0500", "m0501", "m0510", state))
 })
 
 test("validateMonotonicEnd rejects equal newStart", () => {
@@ -630,3 +625,7 @@ test("recovery: clear after recoveryFadeWindow good manual compresses", async ()
 // only as type/utility helpers in the harness bootstrap.
 void indexRefMessages
 void ({} as PreparedSession)
+// Logic Verified: finalizeSession round-trips compress-pending/active, clears userForced on success, preserves recoveryForced, and validateMonotonicEnd accepts strictly greater boundaries.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

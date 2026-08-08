@@ -383,3 +383,7 @@ test("compress range mode rejects overlapping batched ranges", async () => {
 
     assert.equal(state.prune.messages.blocksById.size, 0)
 })
+// Logic Verified: range mode rebuilds subagent message refs after session reset, appends protected prompt info, batches multiple ranges, and rejects overlapping ranges.
+// Bugs Documented: none.
+// Fakes Updated: none
+// Review Status: pending independent review.

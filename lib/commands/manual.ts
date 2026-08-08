@@ -12,9 +12,9 @@ import type { SessionState, WithParts } from "../state"
 import type { PluginConfig } from "../config"
 import { sendIgnoredMessage } from "../ui/notification"
 import { saveManualModeSetting } from "../state/persistence"
+import { effectiveManualMode } from "../state/utils"
 import { getCurrentParams } from "../token-utils"
 import { buildCompressedBlockGuidance } from "../prompts/extensions/nudge"
-import { isIgnoredUserMessage } from "../messages/query"
 
 const MANUAL_MODE_ON = "Manual mode is now ON. Use /dcp-compress to trigger context tools manually."
 
@@ -62,31 +62,57 @@ export async function handleManualToggleCommand(
     const { client, state, logger, sessionId, messages } = ctx
 
     if (modeArg === "on") {
-        state.manualMode = "active"
         // v2 protocol: userForced tracks explicit user intent. recoveryForced
         // is preserved — `/dcp manual on` does not clear it (architect decision
         // per PLAN §6.2).
         state.userForced = true
     } else if (modeArg === "off") {
-        state.manualMode = false
         // v2 protocol: `/dcp manual off` clears userForced ONLY. recoveryForced
         // must be preserved — only session end, OpenCode restart, or
         // recoveryFadeWindow consecutive good manual compresses clears it.
         state.userForced = false
     } else {
-        state.manualMode = state.manualMode ? false : "active"
-        state.userForced = !!state.manualMode
+        // BUG-032: refuse to clobber a "compress-pending" transient — the
+        // user has issued `/dcp-compress` and the model still owes a compress
+        // call. The slash-command handler owns that tri-state value (PAT-007
+        // + DPP-016); collapsing it would silently break the pending compress
+        // (the next `compress` call would be blocked by prepareSession).
+        if (state.manualMode === "compress-pending") {
+            const params = getCurrentParams(state, messages, logger)
+            await sendIgnoredMessage(
+                client,
+                sessionId,
+                "Cannot toggle manual mode while a compress is pending; let the compress complete first.",
+                params,
+                logger,
+            )
+            return
+        }
+        state.userForced = !state.userForced
     }
 
+    // BUG-006 / BUG-024 / BUG-050 cluster fix (DPP-017, PAT-007): every
+    // writer of `userForced`/`recoveryForced` must re-derive the
+    // `state.manualMode` cache via `effectiveManualMode` so the cache never
+    // drifts from the canonical reader.
+    state.manualMode = effectiveManualMode(state)
+
     const params = getCurrentParams(state, messages, logger)
+    // Notify using the user's intent (userForced) rather than the derived
+    // cache. The cache can disagree with the user's intent when
+    // recoveryForced is set (e.g. "/dcp manual off" while recoveryForced=true
+    // leaves the cache at "active" but the user just toggled off).
     await sendIgnoredMessage(
         client,
         sessionId,
-        state.manualMode ? MANUAL_MODE_ON : MANUAL_MODE_OFF,
+        state.userForced ? MANUAL_MODE_ON : MANUAL_MODE_OFF,
         params,
         logger,
     )
-    await saveManualModeSetting(sessionId, !!state.manualMode, logger)
+    // Persist the user's intent. saveManualModeSetting writes BOTH the
+    // legacy `manualMode` boolean and the v2 `userForced` flag in lockstep
+    // so a reload via loadManualModeSetting recovers the same value.
+    await saveManualModeSetting(sessionId, state.userForced, logger)
 
     logger.info("Manual mode toggled", { manualMode: state.manualMode })
 }
@@ -95,42 +121,9 @@ export async function handleManualTriggerCommand(
     ctx: ManualCommandContext,
     tool: "compress",
     userFocus?: string,
-): Promise<string | null> {
+): Promise<string> {
+    // getTriggerPrompt always returns a non-empty string; the nullable in the
+    // old signature was a type lie that misled callers about a contract that
+    // doesn't exist. BUG-066.
     return getTriggerPrompt(tool, ctx.state, ctx.config, userFocus)
-}
-
-export function applyPendingManualTrigger(
-    state: SessionState,
-    messages: WithParts[],
-    logger: Logger,
-): void {
-    const pending = state.pendingManualTrigger
-    if (!pending) {
-        return
-    }
-
-    if (!state.sessionId || pending.sessionId !== state.sessionId) {
-        state.pendingManualTrigger = null
-        return
-    }
-
-    for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i]
-        if (msg.info.role !== "user" || isIgnoredUserMessage(msg)) {
-            continue
-        }
-
-        for (const part of msg.parts) {
-            if (part.type !== "text" || part.ignored || part.synthetic) {
-                continue
-            }
-
-            part.text = pending.prompt
-            state.pendingManualTrigger = null
-            logger.debug("Applied manual prompt", { sessionId: pending.sessionId })
-            return
-        }
-    }
-
-    state.pendingManualTrigger = null
 }

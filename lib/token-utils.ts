@@ -2,7 +2,9 @@ import { SessionState, WithParts } from "./state"
 import { AssistantMessage, UserMessage } from "@opencode-ai/sdk/v2"
 import { Logger } from "./logger"
 import * as _anthropicTokenizer from "@anthropic-ai/tokenizer"
+// ponytail: `@anthropic-ai/tokenizer` ships dual ESM/CJS exports; the cast handles the CJS default-export shape. Add when the package ships a proper `exports` map.
 const anthropicCountTokens = (_anthropicTokenizer.countTokens ??
+    // ponytail: continuation of the dual-export seam above; the cast is on the CJS default-export branch.
     (_anthropicTokenizer as any).default?.countTokens) as typeof _anthropicTokenizer.countTokens
 import { getLastUserMessage } from "./messages/query"
 

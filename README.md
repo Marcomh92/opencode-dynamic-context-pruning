@@ -77,7 +77,7 @@ Each level overrides the previous, so project settings take priority over global
     "enabled": true,
     // Automatically update npm-installed DCP when a newer npm latest is available.
     // Version-locked plugin specs are not updated.
-    "autoUpdate": true,
+    "autoUpdate": false,
     // Enable debug logging to ~/.config/opencode/logs/dcp/
     "debug": false,
     // Notification display: "off", "minimal", or "detailed"
@@ -213,12 +213,9 @@ To reset an override, delete the matching file from your overrides directory.
 
 ### Protected Tools
 
-By default, these tools are always protected from pruning:
-`task`, `skill`, `todowrite`, `todoread`, `compress`, `batch`, `plan_enter`, `plan_exit`, `write`, `edit`
+By default, no tools are protected from pruning. The v2 fork runtime default for every `protectedTools` array (`commands.protectedTools`, `compress.protectedTools`, `strategies.deduplication.protectedTools`, `strategies.purgeErrors.protectedTools`) is `[]`. This is intentional — `DPP-007` makes replace-semantics the hard rule, so an empty list means "nothing protected", not "merge with a default". The legacy upstream default of 10 tools (`task`, `skill`, `todowrite`, `todoread`, `compress`, `batch`, `plan_enter`, `plan_exit`, `write`, `edit`) was dropped in this fork.
 
-The `protectedTools` arrays in `commands` and `strategies` add to this default list.
-
-For the `compress` tool, `compress.protectedTools` ensures specific tool outputs are appended to the compressed summary. By default it includes `task`, `skill`, `todowrite`, and `todoread`.
+To protect specific tools, list them in the appropriate `protectedTools` array. For the `compress` tool, `compress.protectedTools` controls which tool outputs are appended to the compressed summary. See `docs/CONFIGURATION.md` for the merge and replace semantics, and `AGENTS.md` ("No default protected tools in v2 fork") for the rationale.
 
 ## Impact on Prompt Caching
 

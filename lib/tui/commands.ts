@@ -1,6 +1,7 @@
 import type { DcpCommand, TuiApi } from "./types"
 
 export function registerCommands(api: TuiApi, commands: DcpCommand[]) {
+    // ponytail: `TuiApi` is sealed; `keymap` is an internal TUI seam not exposed in the plugin type. Drop when the plugin type gains the field.
     const keymap = (api as any).keymap
     if (keymap?.registerLayer) {
         keymap.registerLayer({
