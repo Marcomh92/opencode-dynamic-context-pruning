@@ -64,6 +64,44 @@ export async function isSubAgentSession(client: any, sessionID: string): Promise
     }
 }
 
+/**
+ * Detects whether a session title indicates it was forked from another session
+ * via the OpenCode UI fork action. Matches the upstream server's
+ * `getForkedTitle` regex `/^(.+) \(fork #(\d+)\)$/`.
+ *
+ * This is the ONLY in-band signal we have today — the OpenCode SDK does not
+ * expose a `forkedFrom` field on `Session`. A user-renamed title defeats
+ * detection (graceful: returns `isForked: false`). Missing / non-string titles
+ * also return `isForked: false` — no throw, no crash.
+ *
+ * The signature is the REPLACEABLE contract: when OpenCode SDK exposes a real
+ * `forkedFrom` field (upstream issue tracked separately), the regex logic
+ * behind this signature swaps for a 2-line SDK call without any caller change.
+ * See known_issues/BUG-087 and docs/DECISIONS/002-compression-state-is-session-scoped.md.
+ *
+ * ponytail: title-pattern detection is fragile (user can rename). When swapped
+ * for upstream forkedFrom, the regex logic becomes a 2-line SDK call.
+ */
+export function detectParentSessionFromTitle(title: string | undefined | null): {
+    isForked: boolean
+    parentTitle?: string
+    forkNumber?: number
+} {
+    if (typeof title !== "string" || title.length === 0) {
+        return { isForked: false }
+    }
+    const match = /^(.+) \(fork #(\d+)\)$/.exec(title)
+    if (match === null) {
+        return { isForked: false }
+    }
+    const parentTitle = match[1]
+    const forkNumber = Number.parseInt(match[2], 10)
+    if (!Number.isFinite(forkNumber)) {
+        return { isForked: false }
+    }
+    return { isForked: true, parentTitle, forkNumber }
+}
+
 export function findLastCompactionTimestamp(messages: WithParts[]): number {
     for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i]

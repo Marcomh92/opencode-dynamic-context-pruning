@@ -6,8 +6,10 @@ This directory tracks known bugs, limitations, and design trade-offs in the `@ta
 
 ## Active Issues
 
-| ID  | Title | Severity | Status |
-| --- | ----- | -------- | ------ |
+| ID      | Title                                                                                                               | Severity | Status |
+| ------- | ------------------------------------------------------------------------------------------------------------------- | -------- | ------ |
+| BUG-088 | `loadAllSessionStats` double-counts `totalPruneTokens` when compression blocks are inherited across forked sessions | Low      | Open   |
+| BUG-089 | fork state inheritance protocol layer (residual from BUG-087 after UX mitigation reverts)                           | Medium   | Open   |
 
 ## Severity Legend
 
@@ -143,6 +145,7 @@ The following reports describe the same root cause or surface. Fix once, mark th
 | BUG-084 | Validate `protectedTools` entries at config load with regex (`/^\S+$/`, not the report's tighter charset)                                                  | Suggestion                    | Fixed  | 2026-08-07 |
 | BUG-085 | lib/compress/index.ts re-exports type-only `ToolContext` as a value                                                                                        | High                          | Fixed  | 2026-08-07 |
 | BUG-086 | compression-timing-queue-eaten-by-unconditional-delete                                                                                                     | Medium                        | Fixed  | 2026-08-07 |
+| BUG-087 | forked-session-context-bloat                                                                                                                               | Medium                        | Fixed  | 2026-08-07 |
 
 _Move files to `fixed/` and add a row here when resolved._
 
