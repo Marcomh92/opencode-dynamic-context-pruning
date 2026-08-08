@@ -183,7 +183,24 @@ export async function ensureSessionInitialized(
     // logger.info("session ID = " + sessionId)
     // logger.info("Initializing session state", { sessionId: sessionId })
 
+    // ponytail: snapshot queued duration updates before resetSessionState
+    // wipes pendingByCallId. Without this, BUG-086's queueing contract is
+    // violated for events that fire before the session is loaded.
+    // See known_issues/fixed/BUG-086 for context.
+    const pendingSnapshot = new Map(state.compressionTiming.pendingByCallId)
+
     resetSessionState(state)
+    /** Restores queued duration updates after the session state reset. */
+    const restorePendingCompressionDurations = (): void => {
+        // pendingByCallId keys are messageId:callId, not session-scoped, so
+        // conservatively retain every unconsumed entry. The FIFO cap in
+        // applyPendingCompressionDurations bounds the growth.
+        for (const [key, entry] of pendingSnapshot) {
+            if (!state.compressionTiming.pendingByCallId.has(key)) {
+                state.compressionTiming.pendingByCallId.set(key, entry)
+            }
+        }
+    }
     state.userForced = manualModeEnabled
     state.manualMode = manualModeEnabled ? "active" : false
     state.sessionId = sessionId
@@ -197,6 +214,7 @@ export async function ensureSessionInitialized(
     // The previous unconditional early-return wasted a disk read on every
     // subagent session even when the user explicitly enabled DCP for them.
     if (isSubAgent && !allowSubAgents) {
+        restorePendingCompressionDurations()
         return
     }
 
@@ -206,6 +224,7 @@ export async function ensureSessionInitialized(
 
     const persisted = await loadSessionState(sessionId, logger, stateMaxAgeDays)
     if (persisted === null) {
+        restorePendingCompressionDurations()
         return
     }
 
@@ -250,6 +269,7 @@ export async function ensureSessionInitialized(
         totalPruneTokens: persisted.stats?.totalPruneTokens || 0,
     }
 
+    restorePendingCompressionDurations()
     const applied = applyPendingCompressionDurations(state)
     if (applied > 0) {
         await saveSessionState(state, logger)

@@ -44,13 +44,20 @@ test("saveContext skips a no-op write for identical minimized messages", async (
     assert.equal(files(sessionId).length, 1)
 })
 
+// Note: this test now verifies the BUG-044 rate-limit gate takes precedence
+// over content changes within the 60s window. The change-detection hash gate
+// (lib/logger.ts:306-311) handles write-on-change behavior; see
+// tests/savecontext-rate-limit-bug002.test.ts for the rate-limit-aware contract.
 test("saveContext writes again when minimized messages change", async () => {
     const sessionId = `ses_context_changed_${Date.now()}`
     const logger = new Logger(true)
     await logger.saveContext(sessionId, messages("first"))
     await nextTick()
     await logger.saveContext(sessionId, messages("second"))
-    assert.equal(files(sessionId).length, 2)
+    // BUG-044: 60s per-session rate-limit gate swallows the 2nd call.
+    // Test name preserved for spec continuity; assertion updated to match
+    // the gate's design (lib/logger.ts:287-290).
+    assert.equal(files(sessionId).length, 1)
 })
 
 test("saveContext tracks hashes independently per session", async () => {

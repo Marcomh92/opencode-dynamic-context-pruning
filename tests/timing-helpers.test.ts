@@ -213,7 +213,7 @@ test("BUG-022: attachCompressionDuration matches on compressMessageId AND compre
 // durationMs writes is harmless; the map must stay bounded.
 // ────────────────────────────────────────────────────────────────────────────
 
-test("BUG-010: pendingByCallId entry is deleted even when no matching block exists", () => {
+test("BUG-086: pendingByCallId entry survives when no matching block exists", () => {
     const state = createSessionState()
     state.compressionTiming.pendingByCallId.set("m1:c1", {
         messageId: "m1",
@@ -225,16 +225,17 @@ test("BUG-010: pendingByCallId entry is deleted even when no matching block exis
 
     // No block exists for (m1, c1) → attach returns 0.
     assert.equal(updates, 0)
-    // After fix: the entry is gone regardless.
-    // Current: entry is leaked (size === 1).
+    // ponytail: BUG-086 reverted BUG-010's unconditional-delete. Now entries
+    // survive until consumed by a matching attach or FIFO-evicted by CAP.
+    // See known_issues/BUG-086 for context.
     assert.equal(
         state.compressionTiming.pendingByCallId.size,
-        0,
-        "orphaned pending entries must be evicted even when no block matches",
+        1,
+        "pending entries survive until a matching block exists or FIFO eviction",
     )
 })
 
-test("BUG-010: pendingByCallId entry is deleted when the matching block has a different callId", () => {
+test("BUG-086: pendingByCallId entry survives when the matching block has a different callId", () => {
     const state = createSessionState()
     seedBlock(state, 1, "m1", "c2") // different callId than the pending entry
 
@@ -246,8 +247,11 @@ test("BUG-010: pendingByCallId entry is deleted when the matching block has a di
 
     applyPendingCompressionDurations(state)
 
-    // attach returns 0 (no match) — entry must still be evicted.
-    assert.equal(state.compressionTiming.pendingByCallId.size, 0)
+    // attach returns 0 (no match) — entry survives until a matching block exists.
+    // ponytail: BUG-086 reverted BUG-010's unconditional-delete. Now entries
+    // survive until consumed by a matching attach or FIFO-evicted by CAP.
+    // See known_issues/BUG-086 for context.
+    assert.equal(state.compressionTiming.pendingByCallId.size, 1)
 })
 
 test("BUG-010: applyPendingCompressionDurations still applies duration to a matching block", () => {

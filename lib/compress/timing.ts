@@ -59,7 +59,13 @@ export function applyPendingCompressionDurations(state: SessionState): number {
         return 0
     }
 
+    // ponytail: BUG-086 — restore conditional delete so queued entries survive
+    // until a matching block exists (sessions reloaded from disk land their
+    // pending entries on the next `ensureSessionInitialized` call). The FIFO
+    // cap below bounds the leak surface the BUG-010 fix originally closed.
+    const CAP = 128
     let updates = 0
+    const consumed: string[] = []
     for (const [key, entry] of state.compressionTiming.pendingByCallId) {
         const applied = attachCompressionDuration(
             state.prune.messages,
@@ -67,11 +73,19 @@ export function applyPendingCompressionDurations(state: SessionState): number {
             entry.callId,
             entry.durationMs,
         )
-        // ponytail: unconditional delete — one tick of durationMs writes may not
-        // land on a block (deactivated before completion), but the map must stay
-        // bounded. Symmetric with sibling startsByCallId which always evicts.
         updates += applied
-        state.compressionTiming.pendingByCallId.delete(key)
+        if (applied > 0) consumed.push(key)
+    }
+    for (const k of consumed) state.compressionTiming.pendingByCallId.delete(k)
+
+    // ponytail: FIFO eviction ceiling 128 — protects against the BUG-010 leak
+    // (sessions that never load, or blocks deactivated before completion). Map
+    // preserves insertion order, so `keys().next()` is the oldest entry.
+    // Upgrade to per-session caps if multi-session memory matters.
+    while (state.compressionTiming.pendingByCallId.size > CAP) {
+        const oldest = state.compressionTiming.pendingByCallId.keys().next().value
+        if (oldest === undefined) break
+        state.compressionTiming.pendingByCallId.delete(oldest)
     }
 
     return updates
