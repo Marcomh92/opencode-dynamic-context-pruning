@@ -256,8 +256,10 @@ export async function handleSweepCommand(ctx: SweepCommandContext): Promise<void
     }
 
     // Persist state
-    saveSessionState(state, logger).catch((err) =>
-        logger.error("Failed to persist state after sweep", { error: err.message }),
+    // BUG-092 — plumb stateRetentionDays so the save-path sweep fires on
+    // the first persist after the plugin boots.
+    saveSessionState(state, logger, undefined, config?.compress?.stateRetentionDays ?? null).catch(
+        (err) => logger.error("Failed to persist state after sweep", { error: err.message }),
     )
 
     const message = formatSweepMessage(

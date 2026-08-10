@@ -54,7 +54,16 @@ export const injectCompressNudges = (
         state.nudges.turnNudgeAnchors.clear()
         state.nudges.iterationNudgeAnchors.clear()
         // M2.5c Fix 5 — coalesce per transform fire (was `void saveSessionState`).
-        coalesceSaveSessionState(state, logger)
+        // BUG-092 — plumb stateRetentionDays so the save-path sweep fires
+        // on the first persist after the plugin boots. `?.` + `?? null` keeps
+        // tests with partial compress configs (no `compress` property at all,
+        // or no `stateRetentionDays` field) green without modifying them.
+        coalesceSaveSessionState(
+            state,
+            logger,
+            undefined,
+            config?.compress?.stateRetentionDays ?? null,
+        )
         return
     }
 
@@ -140,7 +149,15 @@ export const injectCompressNudges = (
 
     if (anchorsChanged) {
         // M2.5c Fix 5 — coalesce per transform fire (was `void saveSessionState`).
-        coalesceSaveSessionState(state, logger)
+        // BUG-092 — plumb stateRetentionDays so the save-path sweep fires
+        // on the first persist after the plugin boots. `?.` + `?? null` keeps
+        // tests with partial compress configs green.
+        coalesceSaveSessionState(
+            state,
+            logger,
+            undefined,
+            config?.compress?.stateRetentionDays ?? null,
+        )
     }
 }
 

@@ -6,10 +6,8 @@ This directory tracks known bugs, limitations, and design trade-offs in the `@ta
 
 ## Active Issues
 
-| ID      | Title                                                                                                               | Severity | Status |
-| ------- | ------------------------------------------------------------------------------------------------------------------- | -------- | ------ |
-| BUG-088 | `loadAllSessionStats` double-counts `totalPruneTokens` when compression blocks are inherited across forked sessions | Low      | Open   |
-| BUG-092 | fork candidate scan O(state-dir) growth | open | 2026-08-09
+| ID  | Title | Severity | Status |
+| --- | ----- | -------- | ------ |
 
 ## Severity Legend
 
@@ -148,6 +146,9 @@ The following reports describe the same root cause or surface. Fix once, mark th
 | BUG-087 | forked-session-context-bloat                                                                                                                               | Medium                        | Fixed  | 2026-08-07 |
 | BUG-089 | fork state inheritance protocol layer (residual from BUG-087 after UX mitigation reverts)                                                                  | Medium                        | Fixed  | 2026-08-08 |
 | BUG-090 | persistence-side fork-suffix strip breaks multi-generation inheritance (move strip to scan side per BUG-090 §"Fix path" option 2)                          | Medium                        | Fixed  | 2026-08-08 |
+| BUG-091 | rekeyed boundary refs must preserve m-NNNN refs that syntactically match bN                                                                                | Low                           | Fixed  | 2026-08-10 |
+| BUG-088 | `loadAllSessionStats` double-counts `totalPruneTokens` when compression blocks are inherited across forked sessions                                        | Low                           | Fixed  | 2026-08-10 |
+| BUG-092 | Fork candidate scan is O(entire state dir) with no bound — log spam + latency grows with months of use                                                     | Low                           | Fixed  | 2026-08-10 |
 
 _Move files to `fixed/` and add a row here when resolved._
 

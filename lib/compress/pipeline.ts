@@ -213,7 +213,14 @@ export async function finalizeSession(
     ctx.state.manualMode = effectiveManualMode(ctx.state)
 
     applyPendingCompressionDurations(ctx.state)
-    await saveSessionState(ctx.state, ctx.logger)
+    // BUG-092 — plumb stateRetentionDays so the save-path sweep fires on
+    // the first persist after the plugin boots.
+    await saveSessionState(
+        ctx.state,
+        ctx.logger,
+        undefined,
+        ctx.config?.compress?.stateRetentionDays ?? null,
+    )
 
     const params = getCurrentParams(ctx.state, rawMessages, ctx.logger)
     const sessionMessageIds = rawMessages

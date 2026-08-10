@@ -1,8 +1,44 @@
 # BUG-088: loadAllSessionStats double-counts `totalPruneTokens` when compression blocks are inherited across forked sessions
 
-**Status:** Open
-**Severity:** TBD (architect to assign — likely Low/Medium; affects lifetime stat accuracy, no correctness hole)
-**Component:** lib/state/persistence.ts:479-512
+**Status:** Fixed 2026-08-10
+**Severity:** Low (lifetime-stat inflation; no correctness hole)
+**Component:** lib/state/inherit.ts fork-copy block (`tryInheritFromParent`)
+
+## Resolution (2026-08-10)
+
+The original bug report recommended a full Option-B rename (`totalPruneTokens` →
+`sessionOwnPruneTokens`) plus a per-session UI change. That scope was too large
+for the v2 fork-protocol round and was deferred. The implemented fix is the
+**minimum-impact Option-B variant** that closes the double-count without
+touching the on-disk field name or `/dcp stats` UI.
+
+**Fix:** In the fork-copy block at `lib/state/inherit.ts:660-679`,
+`parentState.stats.totalPruneTokens` is no longer copied into the child's
+`stats.totalPruneTokens`. Instead, it lands in the child's new
+`stats.inheritedPruneTokens` field (display-only). Multi-gen forks accumulate
+parent's `inheritedPruneTokens` into the child's `inheritedPruneTokens` so the
+transitive display is correct, but **never** into `totalPruneTokens`. Because
+`loadAllSessionStats` sums `totalPruneTokens` across files, A and B can no
+longer both report A's original savings — A reports it as `totalPruneTokens`,
+B reports it as `inheritedPruneTokens` (which the all-time aggregator
+deliberately ignores).
+
+**No schema bump, no rename, no UI change.** The aggregation path is
+unchanged; only the write side is fixed. Q2 (the "copied push on 0 accumulator"
+follow-up): the copy log now fires only when the final `inheritedAccumulator`
+is > 0, so a parent with `totalPruneTokens: 0` no longer logs a copy that
+wrote nothing.
+
+**Tests:** existing fork-inherit tests cover the copy semantics; the Q2 fix
+log-line behaviour is exercised by the debug-log summary test in the
+fork-inherit suite. New clamp/validation tests for `stateRetentionDays` (a
+sibling fix shipped in the same round) live in the BUG-092 fix file.
+
+**Severity rationale:** Lifetime stat inflation is a UX defect, not a
+correctness hole. Architect-verified Low: the per-session stat is correct,
+the per-session inherit display is correct, and only the cross-session
+aggregation was wrong — and only after the BUG-089 fork-inheritance feature
+became live (it was latent before). Same cluster shape as BUG-087/089/091.
 
 ## Problem
 
@@ -158,6 +194,8 @@ The fork-state-inheritance plan should:
 
 - **Plan**: `docs/plans/fork-state-inheritance.md` — the fork-inheritance plan makes this bug live (was dormant).
 - **BUG-087**: `known_issues/fixed/BUG-087-forked-session-context-bloat.md` — initial UX-only mitigation for fork bloat; precedes both this bug and the fork-inheritance plan.
+- **BUG-089**: `known_issues/fixed/BUG-089-fork-state-inheritance-protocol-layer.md` — the fork-inheritance feature that surfaced this defect.
+- **BUG-091**: `known_issues/fixed/BUG-091-rekeyed-boundary-refs-preserve-m-NNNN-bN.md` — sibling fix in the same fork-protocol round; same `lib/state/inherit.ts` area.
 - **lib/state/persistence.ts:166-169**: single-file merge correctly uses `Math.max` — no double-count within a session.
-- **lib/state/persistence.ts:479-512**: the buggy all-sessions aggregation.
+- **lib/state/persistence.ts:479-512**: the buggy all-sessions aggregation (now safe: the write side no longer contributes to it).
 - **lib/commands/stats.ts:167**: consumer of `loadAllSessionStats`.

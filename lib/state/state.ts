@@ -62,7 +62,15 @@ export const checkSession = async (
             timestamp: lastCompactionTimestamp,
         })
 
-        saveSessionState(state, logger).catch((error) => {
+        // BUG-092 — plumb stateRetentionDays so the save-path sweep fires
+        // on the first persist after the plugin boots. `?.` + `?? null` keeps
+        // tests with partial compress configs green.
+        saveSessionState(
+            state,
+            logger,
+            undefined,
+            config?.compress?.stateRetentionDays ?? null,
+        ).catch((error) => {
             logger.warn("Failed to persist state reset after compaction", {
                 error: error instanceof Error ? error.message : String(error),
             })
@@ -251,6 +259,8 @@ export async function ensureSessionInitialized(
         // `experimental.inheritOnFork` (default true per user direction
         // 2026-08-08). Try/catch wraps everything; inheritance is
         // best-effort and never blocks the transform.
+        // BUG-092 — plumb stateRetentionDays through so the candidate scan
+        // honours the same retention window as the save-path sweep.
         await tryInheritFromParent(
             state,
             client,
@@ -259,6 +269,7 @@ export async function ensureSessionInitialized(
             messages,
             config,
             stateMaxAgeDays,
+            config?.compress?.stateRetentionDays ?? null,
         )
         restorePendingCompressionDurations()
         return
@@ -321,7 +332,14 @@ export async function ensureSessionInitialized(
     restorePendingCompressionDurations()
     const applied = applyPendingCompressionDurations(state)
     if (applied > 0) {
-        await saveSessionState(state, logger)
+        // BUG-092 — plumb stateRetentionDays so the save-path sweep fires
+        // on the first persist after the plugin boots.
+        await saveSessionState(
+            state,
+            logger,
+            undefined,
+            config?.compress?.stateRetentionDays ?? null,
+        )
     }
 }
 

@@ -439,7 +439,7 @@ export function createTextCompleteHandler() {
     }
 }
 
-export function createEventHandler(state: SessionState, logger: Logger) {
+export function createEventHandler(state: SessionState, logger: Logger, config: PluginConfig) {
     return async (input: { event: any }) => {
         const eventTime =
             typeof input.event?.time === "number" && Number.isFinite(input.event.time)
@@ -500,7 +500,12 @@ export function createEventHandler(state: SessionState, logger: Logger) {
                 return
             }
 
-            await saveSessionState(state, logger)
+            await saveSessionState(
+                state,
+                logger,
+                undefined,
+                config?.compress?.stateRetentionDays ?? null,
+            )
 
             logger.info("Attached compression time to blocks", {
                 messageID: part.messageID,

@@ -758,9 +758,13 @@ test("BUG-089: id-monotonic-max", async () => {
     assert.equal(state.prune.messages.nextBlockId, 51)
 })
 
-test("BUG-089: stats-copied", async () => {
-    // §6.12: parent's stats.totalPruneTokens carries over to B.
-    // Reference BUG-088 for the latent aggregation bug exposed by this.
+test("BUG-089: stats-inherited-as-inherited", async () => {
+    // §6.12: parent's stats.totalPruneTokens carries over to B as
+    // `inheritedPruneTokens`, NOT as `totalPruneTokens`. The split was
+    // introduced by the BUG-088 fix: totalPruneTokens is now strictly
+    // B's own-session savings (never summed across sessions by
+    // loadAllSessionStats), while inheritedPruneTokens carries the
+    // transitive fork contribution and is display-only per session.
     const sessionA = `ses_A_${Date.now()}_stats`
     const sessionB = `ses_B_${Date.now()}_stats`
     const messagesB = buildMessages(sessionB, 10)
@@ -777,8 +781,12 @@ test("BUG-089: stats-copied", async () => {
     const state = createSessionState()
     await initialize(state, client, sessionB, messagesB)
 
-    // planner §8.12: B inherits A's lifetime total.
-    assert.equal(state.stats.totalPruneTokens, 5000)
+    // B's own-session total is untouched by inheritance — stays at 0
+    // (createSessionState default). BUG-088 fix: parent savings no
+    // longer leak into the all-time sum via totalPruneTokens.
+    assert.equal(state.stats.totalPruneTokens, 0)
+    // Parent's 5000 lands in the display-only inherited slot.
+    assert.equal(state.stats.inheritedPruneTokens, 5000)
 })
 
 test("BUG-089: prune-tools-copied", async () => {

@@ -32,6 +32,7 @@ export function formatStatsMessage(
     nonCompactingRunCount: number,
     recoveryFadeCounter: number,
     recoveryFadeWindow: number,
+    inheritedTokens: number = 0,
 ): string {
     const lines: string[] = []
 
@@ -48,6 +49,14 @@ export function formatStatsMessage(
     lines.push(`  Time:             ${formatCompressionTime(sessionDurationMs)}`)
     lines.push(`  Messages:         ${sessionMessages}`)
     lines.push(`  Tools:            ${sessionTools}`)
+    // BUG-088 — per-session "tokens saved" with inherited annotation. The
+    // inherited slice is never summed into the all-time total (see
+    // loadAllSessionStats, lib/state/persistence.ts:598).
+    const inheritedAnnotation =
+        inheritedTokens > 0
+            ? ` (includes ~${formatTokenCount(inheritedTokens)} inherited from fork)`
+            : ""
+    lines.push(`  Tokens saved:     ~${formatTokenCount(sessionTokens)}${inheritedAnnotation}`)
     lines.push("")
     lines.push("Recovery state:")
     lines.push("─".repeat(60))
@@ -118,6 +127,7 @@ export async function handleStatsCommand(ctx: StatsCommandContext): Promise<void
         state.nonCompactingRunCount ?? 0,
         state.recoveryFadeCounter ?? 0,
         config.compress.recoveryFadeWindow ?? 5,
+        report.inheritedTokens,
     )
 
     const params = getCurrentParams(state, messages, logger)
@@ -129,6 +139,7 @@ export async function handleStatsCommand(ctx: StatsCommandContext): Promise<void
         sessionTools: report.sessionTools,
         sessionMessages: report.sessionMessages,
         sessionDurationMs: report.sessionDurationMs,
+        inheritedTokens: report.inheritedTokens,
         allTimeTokens: report.allTime.totalTokens,
         allTimeTools: report.allTime.totalTools,
         allTimeMessages: report.allTime.totalMessages,
@@ -136,7 +147,13 @@ export async function handleStatsCommand(ctx: StatsCommandContext): Promise<void
 }
 
 export async function buildStatsReport(state: SessionState, logger: Logger) {
-    const sessionTokens = state.stats.totalPruneTokens
+    // BUG-088 — per-session figure now includes inherited savings from fork
+    // ancestors. inheritedPruneTokens is display-only and never contributes
+    // to all-time aggregation (loadAllSessionStats sums totalPruneTokens only).
+    // ponytail: hoist to a local so the annotation block below can read it
+    // once without the ?? 0 ternary at every use site.
+    const inheritedTokens = state.stats.inheritedPruneTokens ?? 0
+    const sessionTokens = state.stats.totalPruneTokens + inheritedTokens
     const sessionSummaryTokens = Array.from(state.prune.messages.blocksById.values()).reduce(
         (total, block) => (block.active ? total + block.summaryTokens : total),
         0,
@@ -172,6 +189,7 @@ export async function buildStatsReport(state: SessionState, logger: Logger) {
         sessionTools,
         sessionMessages,
         sessionDurationMs,
+        inheritedTokens,
         allTime,
     }
 }

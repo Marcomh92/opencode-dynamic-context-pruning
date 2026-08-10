@@ -22,6 +22,19 @@ The v3 bump is defensive: the `subAgentResultCache` value type changed from `str
 
 `loadManualModeSetting` / `saveManualModeSetting` pass `null`; the manual-mode flag is age-insensitive.
 
+## Sweep on save
+
+`sweepExpiredStateFiles(logger, stateRetentionDays)` (`lib/state/persistence.ts:101-155`):
+
+- Runs at most once per plugin-process run (gated by module-level `sweepDone` flag at `lib/state/persistence.ts:94`).
+- `stateRetentionDays === null` → returns immediately (legacy behaviour).
+- Deletes files older than `stateRetentionDays` from the DCP storage dir (`$XDG_DATA_HOME/opencode/storage/plugin/dcp/`). NOT OpenCode session history — `DPP-001` scopes that.
+- Best-effort: per-file try/catch. A stuck file or permission race never aborts the sweep.
+- Emits a single summary log line on actual work; no-op on the common case.
+- Called at the top of `saveSessionState` (`lib/state/persistence.ts:190`), before the coalescer kick-out.
+
+Complements the load-time age gate by keeping the storage dir bounded; an old file that was never loaded still gets deleted. Configured by `compress.stateRetentionDays` (default `7`). BUG-092.
+
 ## Structural validation
 
 Required fields: `prune.tools` (object), `prune.messages` (object), `nudges` (object), `stats` (object). Missing → return `null` with `warn`. Anchors are filtered to string, deduped, and malformed entries are logged with counts.

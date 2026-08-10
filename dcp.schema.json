@@ -281,6 +281,11 @@
                     "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }],
                     "default": null,
                     "description": "Optional paranoia wall-clock window for state invalidation (days). null (default) means no expiry across schema versions. See PLAN §6.3."
+                },
+                "stateRetentionDays": {
+                    "oneOf": [{ "type": "number", "minimum": 1 }, { "type": "null" }],
+                    "default": 7,
+                    "description": "Days before DCP state files are swept (deleted from disk) and excluded from the fork candidate scan. null disables both behaviours; default 7 days bounds the per-process storage dir. Values below 1 collapse to null (disabled) at the clamp boundary — 0 is destructive (every file swept/scanned-out). BUG-092."
                 }
             },
             "default": {
@@ -300,7 +305,8 @@
                 "maxContextLimitRecovery": 3,
                 "recoveryFadeWindow": 5,
                 "forkSchemaVersion": 3,
-                "stateMaxAgeDays": null
+                "stateMaxAgeDays": null,
+                "stateRetentionDays": 7
             }
         },
         "strategies": {

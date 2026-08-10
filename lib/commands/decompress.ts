@@ -1,5 +1,6 @@
 import type { Logger } from "../logger"
 import type { CompressionBlock, PruneMessagesState, SessionState, WithParts } from "../state"
+import type { PluginConfig } from "../config"
 import { syncCompressionBlocks } from "../messages"
 import { syncPruneToolsFromActiveBlocks } from "../state/utils"
 import { parseBlockRef } from "../message-ids"
@@ -16,6 +17,7 @@ import {
 export interface DecompressCommandContext {
     client: any
     state: SessionState
+    config: PluginConfig
     logger: Logger
     sessionId: string
     messages: WithParts[]
@@ -152,7 +154,7 @@ function formatAvailableBlocksMessage(availableTargets: CompressionTarget[]): st
 }
 
 export async function handleDecompressCommand(ctx: DecompressCommandContext): Promise<void> {
-    const { client, state, logger, sessionId, messages, args } = ctx
+    const { client, state, config, logger, sessionId, messages, args } = ctx
 
     const params = getCurrentParams(state, messages, logger)
     const targetArg = args[0]
@@ -257,7 +259,9 @@ export async function handleDecompressCommand(ctx: DecompressCommandContext): Pr
         .filter((blockId) => !activeBlockIdsBefore.has(blockId))
         .sort((a, b) => a - b)
 
-    await saveSessionState(state, logger)
+    // BUG-092 — plumb stateRetentionDays so the save-path sweep fires on
+    // the first persist after the plugin boots.
+    await saveSessionState(state, logger, undefined, config?.compress?.stateRetentionDays ?? null)
 
     const message = formatDecompressMessage(
         target,

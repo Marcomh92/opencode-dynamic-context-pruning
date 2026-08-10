@@ -85,6 +85,75 @@ function getSessionFilePath(sessionId: string): string {
     return join(resolveStorageDir(), `${sessionId}.json`)
 }
 
+// ponytail: once-per-plugin-process throttle for the state-file sweep. The
+// first save with a non-null stateRetentionDays triggers a full sweep of
+// the storage dir; subsequent saves are no-ops. Revisit if startup cost
+// ever matters — persist the last-sweep timestamp to disk and gate on a
+// configurable interval for cross-process coordination if DCP ever spawns
+// multiple processes (e.g. TUI + Desktop sidecars).
+let sweepDone = false
+
+/** BUG-092 — delete DCP state files older than `stateRetentionDays` from the
+ *  storage dir. Best-effort: per-file try/catch (a stuck file or a permission
+ *  race must not abort the sweep). Throttled to once per plugin-process run
+ *  via the module-level `sweepDone` flag. Returns immediately when
+ *  `stateRetentionDays === null` (legacy behaviour). */
+export async function sweepExpiredStateFiles(
+    logger: Logger,
+    stateRetentionDays: number | null,
+): Promise<void> {
+    if (stateRetentionDays === null) {
+        return
+    }
+    if (sweepDone) {
+        return
+    }
+    sweepDone = true
+
+    const dir = resolveStorageDir()
+    if (!existsSync(dir)) {
+        return
+    }
+
+    const cutoff = Date.now() - stateRetentionDays * 86_400_000
+
+    let entries: string[]
+    try {
+        entries = await fs.readdir(dir)
+    } catch (error: any) {
+        logger.debug("fork retention sweep: readdir failed", { error: error?.message })
+        return
+    }
+
+    let deleted = 0
+    let failed = 0
+    for (const entry of entries) {
+        if (!entry.endsWith(".json")) continue
+        const filePath = join(dir, entry)
+        try {
+            const stat = await fs.stat(filePath)
+            if (stat.mtimeMs < cutoff) {
+                await fs.unlink(filePath)
+                deleted++
+            }
+        } catch {
+            failed++
+        }
+    }
+
+    if (deleted > 0 || failed > 0) {
+        logger.info("fork retention sweep: cleaned state files", {
+            retentionDays: stateRetentionDays,
+            deleted,
+            failed,
+        })
+    } else {
+        logger.debug("fork retention sweep: nothing to clean", {
+            retentionDays: stateRetentionDays,
+        })
+    }
+}
+
 async function writePersistedSessionState(
     sessionId: string,
     state: PersistedSessionState,
@@ -106,11 +175,19 @@ export async function saveSessionState(
     sessionState: SessionState,
     logger: Logger,
     sessionName?: string,
+    stateRetentionDays: number | null = null,
 ): Promise<void> {
     try {
         if (!sessionState.sessionId) {
             return
         }
+
+        // BUG-092 — sweep expired state files before this save writes. The
+        // throttle (module-level `sweepDone`) ensures this runs at most once
+        // per plugin-process run; subsequent saves are O(1) no-ops. Called
+        // BEFORE the coalescer kick-out below so the sweep completes before
+        // any potentially-related disk I/O.
+        await sweepExpiredStateFiles(logger, stateRetentionDays)
 
         // M2.5c Fix 2 — flush the counter into total before serialising. The
         // counter is in-memory transient state; if we save it non-zero, the
@@ -216,6 +293,7 @@ export function coalesceSaveSessionState(
     sessionState: SessionState,
     logger: Logger,
     sessionName?: string,
+    stateRetentionDays: number | null = null,
 ): void {
     const sessionId = sessionState.sessionId
     if (!sessionId) {
@@ -227,8 +305,8 @@ export function coalesceSaveSessionState(
     saveScheduledBySession.set(sessionId, true)
     queueMicrotask(() => {
         saveScheduledBySession.set(sessionId, false)
-        void saveSessionState(sessionState, logger, sessionName).catch((err: any) =>
-            logger.warn("Coalesced save failed", { sessionId, error: err?.message }),
+        void saveSessionState(sessionState, logger, sessionName, stateRetentionDays).catch(
+            (err: any) => logger.warn("Coalesced save failed", { sessionId, error: err?.message }),
         )
     })
 }

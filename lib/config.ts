@@ -42,6 +42,11 @@ export interface CompressConfig {
     recoveryFadeWindow: number
     forkSchemaVersion: number
     stateMaxAgeDays: number | null
+    // BUG-092 — days before DCP state files are swept (deleted from disk)
+    // and excluded from the fork candidate scan. null disables both. Load
+    // gate (stateMaxAgeDays) is independent; it still drops files at load
+    // time even when stateRetentionDays is null.
+    stateRetentionDays: number | null
 }
 
 export interface Commands {
@@ -147,6 +152,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "compress.recoveryFadeWindow",
     "compress.forkSchemaVersion",
     "compress.stateMaxAgeDays",
+    "compress.stateRetentionDays",
     "strategies",
     "strategies.deduplication",
     "strategies.deduplication.enabled",
@@ -694,6 +700,42 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     actual: `${compress.stateMaxAgeDays}`,
                 })
             }
+
+            // BUG-092 — distinct clamp semantics from stateMaxAgeDays.
+            // 0 and negatives collapse to null (disabled, not "no grace
+            // period"); fractional values floor. Plumbed into the
+            // candidate-scan mtime pre-filter and the save-path sweep.
+            if (
+                compress.stateRetentionDays !== undefined &&
+                compress.stateRetentionDays !== null &&
+                typeof compress.stateRetentionDays !== "number"
+            ) {
+                errors.push({
+                    key: "compress.stateRetentionDays",
+                    expected: "number | null",
+                    actual: typeof compress.stateRetentionDays,
+                })
+            }
+            if (
+                typeof compress.stateRetentionDays === "number" &&
+                !Number.isInteger(compress.stateRetentionDays)
+            ) {
+                errors.push({
+                    key: "compress.stateRetentionDays",
+                    expected: "integer number | null",
+                    actual: `${compress.stateRetentionDays} (will be floored)`,
+                })
+            }
+            if (
+                typeof compress.stateRetentionDays === "number" &&
+                compress.stateRetentionDays < 1
+            ) {
+                errors.push({
+                    key: "compress.stateRetentionDays",
+                    expected: "positive integer (>= 1) or null",
+                    actual: `${compress.stateRetentionDays}`,
+                })
+            }
         }
     }
 
@@ -867,6 +909,10 @@ const defaultConfig: PluginConfig = {
         recoveryFadeWindow: 5,
         forkSchemaVersion: 3,
         stateMaxAgeDays: null,
+        // BUG-092 — default 7 days matches the bug spec. Loads older than
+        // this are swept on save and skipped in the candidate scan. null
+        // disables both behaviours (legacy behaviour).
+        stateRetentionDays: 7,
     },
     strategies: {
         deduplication: {
@@ -1044,6 +1090,14 @@ function mergeCompress(
                 ? base.stateMaxAgeDays
                 : override.stateMaxAgeDays,
         ),
+        // BUG-092 — distinct clamp from stateMaxAgeDays. 0 and negatives
+        // collapse to null (disabled, not "no grace period"); fractional
+        // values floor to integer days.
+        stateRetentionDays: clampStateRetentionDays(
+            override.stateRetentionDays === undefined
+                ? base.stateRetentionDays
+                : override.stateRetentionDays,
+        ),
     }
 }
 
@@ -1063,6 +1117,21 @@ export function clampNullOrNonNeg(value: number | null | undefined): number | nu
     if (value === null || value === undefined) return null
     if (typeof value !== "number" || !Number.isFinite(value)) return null
     return value < 0 ? 0 : value
+}
+
+// ponytail: distinct semantics from clampNullOrNonNeg. stateRetentionDays=0
+// is destructive (sweep deletes every file, scan filters every mtime) so we
+// treat it as the disabled sentinel rather than a valid "no grace period"
+// value. Fractional inputs floor to the integer day; non-positive values
+// collapse to null (disabled) so a user typo of 0.5 or -1 falls back instead
+// of silently changing behaviour. Keep clampNullOrNonNeg for stateMaxAgeDays
+// — its 0 is benign (load gate at zero days, never reached because every
+// load happens before "now" would-be expiry).
+export function clampStateRetentionDays(value: unknown): number | null {
+    if (value === null || value === undefined) return null
+    if (typeof value !== "number" || !Number.isFinite(value)) return null
+    const floored = Math.floor(value)
+    return floored < 1 ? null : floored
 }
 
 function mergeCommands(

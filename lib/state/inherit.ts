@@ -196,7 +196,7 @@ export function rekeyBlocksToFork(
     timeToId: Map<number, string>,
 ): CompressionBlock[] {
     return blocks.map((b) => {
-        const startId = parseBoundaryId(b.startId)? b.startId : (timeToId.get(b.startTime) ?? "")
+        const startId = parseBoundaryId(b.startId) ? b.startId : (timeToId.get(b.startTime) ?? "")
         const endId = parseBoundaryId(b.endId) ? b.endId : (timeToId.get(b.endTime) ?? "")
         const anchorMessageId = timeToId.get(b.anchorTime) ?? ""
         const compressMessageId = timeToId.get(b.compressTime) ?? ""
@@ -346,6 +346,7 @@ export async function findCandidateParents(
     parentTitle: string,
     logger: Logger,
     client?: any,
+    stateRetentionDays: number | null = null,
 ): Promise<CandidateFile[]> {
     const dir = resolveStorageDir()
     let entries: string[]
@@ -361,10 +362,20 @@ export async function findCandidateParents(
     // ordered listings.
     entries.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
 
+    // BUG-092 — wall-clock cutoff for the mtime pre-filter. null disables
+    // the filter (legacy behaviour); integer filters files older than the
+    // configured retention window before the readFile + JSON.parse + schema
+    // gate. With stateRetentionDays set, files older than the window are
+    // skipped without the per-file debug log that was inflating the log.
+    const ageCutoff =
+        stateRetentionDays !== null ? Date.now() - stateRetentionDays * 86_400_000 : null
+
     // Pass 1: parse + schema-gate + push. The title filter is deferred
     // until after the SDK title refresh (pass 1.5) so a stale
     // `sessionName` saved before a parent rename can still match.
     const candidates: CandidateFile[] = []
+    let schemaSkipped = 0
+    let ageSkipped = 0
     for (const entry of entries) {
         if (!entry.endsWith(".json")) continue
         const sessionId = entry.slice(0, -".json".length)
@@ -374,6 +385,15 @@ export async function findCandidateParents(
         try {
             stat = await fs.stat(filePath)
         } catch {
+            continue
+        }
+
+        // BUG-092 — mtime pre-filter. Skips the readFile + parse + schema
+        // gate for files older than the retention window. Semantically
+        // identical to the load gate (stateMaxAgeDays), but cheaper: one
+        // syscall instead of readFile + JSON.parse + lastUpdated check.
+        if (ageCutoff !== null && stat.mtimeMs < ageCutoff) {
+            ageSkipped++
             continue
         }
 
@@ -392,10 +412,7 @@ export async function findCandidateParents(
         }
 
         if (!isCompatibleForkSchemaVersion(parsed)) {
-            logger.debug("fork candidate scan: dropping pre-bump file", {
-                sessionId,
-                droppedVersion: parsed?.forkSchemaVersion ?? null,
-            })
+            schemaSkipped++
             continue
         }
 
@@ -403,6 +420,19 @@ export async function findCandidateParents(
             sessionId,
             mtime: stat.mtimeMs,
             persisted: parsed as PersistedSessionState,
+        })
+    }
+
+    // BUG-092 — log collapse. The per-file `dropping pre-bump file` debug
+    // line was generating ~900 lines on machines with accumulated test
+    // fixtures. One summary line covers both skip counts. No-op when both
+    // counts are zero (the common case at startup on a clean dir).
+    if (schemaSkipped > 0 || ageSkipped > 0) {
+        logger.debug("fork candidate scan summary", {
+            total: entries.filter((e) => e.endsWith(".json")).length,
+            schemaSkipped,
+            ageSkipped,
+            kept: candidates.length,
         })
     }
 
@@ -466,6 +496,7 @@ export async function tryInheritFromParent(
     bMessages: WithParts[],
     config: PluginConfig,
     stateMaxAgeDays: number | null,
+    stateRetentionDays: number | null = null,
 ): Promise<void> {
     try {
         // 1. Config gate. `inheritOnFork` lives on `ExperimentalConfig`
@@ -489,7 +520,14 @@ export async function tryInheritFromParent(
         // 3. Candidate scan. Pass `client` so each candidate's title can
         // be refreshed from the SDK before the title-match filter runs —
         // defeats stale `sessionName` saved before a parent rename.
-        const candidates = await findCandidateParents(forkInfo.parentTitle, logger, client)
+        // BUG-092 — plumb stateRetentionDays into the scan for the mtime
+        // pre-filter.
+        const candidates = await findCandidateParents(
+            forkInfo.parentTitle,
+            logger,
+            client,
+            stateRetentionDays,
+        )
         if (candidates.length === 0) {
             logger.debug(
                 `fork detected (#${forkInfo.forkNumber}); no parent state files found for "${forkInfo.parentTitle}"`,
@@ -611,19 +649,47 @@ export async function tryInheritFromParent(
         } else {
             skipped.push("recoveryFadeCounter")
         }
+        // BUG-088 — parent savings go to inheritedPruneTokens, NOT totalPruneTokens.
+        // The cross-session aggregation in loadAllSessionStats
+        // (lib/state/persistence.ts:598) sums totalPruneTokens only, so writing
+        // parent's total here would double-count on the next all-time stats view.
+        // Own-session flushes (prune / sweep / compress / decompress) still
+        // operate on totalPruneTokens — semantics: totalPruneTokens is "this
+        // session's own savings"; inheritedPruneTokens is "savings I display
+        // from a parent fork", display-only.
+        //
+        // ponytail: BUG-088 v2 — single accumulator, single log entry based on
+        // whether anything actually changed. Pre-fix the "copied" log fired as
+        // soon as parentState.stats?.totalPruneTokens was a number, even when
+        // the value was 0 (and inheritedPruneTokens was also 0), so the log
+        // reported a copy that wrote nothing. Now both sources contribute to
+        // one accumulator; "copied" only fires when the final value is > 0.
+        let inheritedAccumulator = 0
         if (typeof parentState.stats?.totalPruneTokens === "number") {
-            state.stats.totalPruneTokens =
-                state.stats.pruneTokenCounter + parentState.stats.totalPruneTokens
-            copied.push("stats.totalPruneTokens")
-        } else {
-            skipped.push("stats.totalPruneTokens")
+            // ponytail: parent-only copy, not parent + counter — counter is
+            // in-memory transient and gets flushed by flushPruneStats on the
+            // next save, not duplicated here.
+            inheritedAccumulator += parentState.stats.totalPruneTokens
         }
+        // Multi-gen: if parent itself inherited from a grandparent, accumulate
+        // so the per-session display shows total transitive inheritance from
+        // the original owner. Still never contributes to totalPruneTokens.
+        if (typeof parentState.stats?.inheritedPruneTokens === "number") {
+            inheritedAccumulator += parentState.stats.inheritedPruneTokens
+        }
+        if (inheritedAccumulator > 0) {
+            state.stats.inheritedPruneTokens = inheritedAccumulator
+            copied.push("stats.inheritedPruneTokens")
+        } else {
+            skipped.push("stats.inheritedPruneTokens")
+        }
+        // NOTE: state.stats.totalPruneTokens is NOT touched by fork inheritance.
 
         // 8c. Re-derive the manualMode cache from the now-merged flags
         // via the canonical helper (DPP-017 / PAT-007). Mirrors the
         // `persisted !== null` branch in `ensureSessionInitialized`.
         state.manualMode = effectiveManualMode(state)
-        
+
         logger.debug("fork inheritance: field copy summary", {
             parentId: parentCandidate.sessionId,
             copied,
@@ -636,7 +702,9 @@ export async function tryInheritFromParent(
         // avoids editing 9 call sites — the save path defaults from the
         // in-memory cache when not passed explicitly; we pass it
         // explicitly to make the round-trip obvious at this site).
-        coalesceSaveSessionState(state, logger, state.sessionTitle)
+        // BUG-092 — plumb stateRetentionDays so the save-path sweep fires
+        // on the first persist after the plugin boots.
+        coalesceSaveSessionState(state, logger, state.sessionTitle, stateRetentionDays)
         state.inheritedFrom = parentCandidate.sessionId
 
         logger.info(

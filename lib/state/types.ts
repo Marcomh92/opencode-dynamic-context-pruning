@@ -20,6 +20,14 @@ export interface ToolParameterEntry {
 export interface SessionStats {
     pruneTokenCounter: number
     totalPruneTokens: number
+    /** Tokens saved by inherited compression blocks (copied at fork time).
+     *  NEVER summed across sessions; reported per-session only. Optional
+     *  for backward compatibility with pre-fork-inheritance state files.
+     *  BUG-088 fix: kept separate from totalPruneTokens so the cross-session
+     *  aggregation in loadAllSessionStats (lib/state/persistence.ts:598) does
+     *  not double-count parent savings that were already copied into the
+     *  child's stats. */
+    inheritedPruneTokens?: number
 }
 
 export interface PrunedMessageEntry {
