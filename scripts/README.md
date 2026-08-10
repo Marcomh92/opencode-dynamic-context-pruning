@@ -6,6 +6,8 @@ Dev tool for previewing prompt outputs.
 
 ```bash
 bun run dcp [TYPE]
+# or
+npm run dcp -- [TYPE]
 ```
 
 ## Types
@@ -23,8 +25,11 @@ bun run dcp [TYPE]
 
 ```bash
 bun run dcp --system
+npm run dcp -- --system
 bun run dcp --nudge
+npm run dcp -- --nudge
 bun run dcp --context-tools
+npm run dcp -- --context-tools
 ```
 
 ## Purpose

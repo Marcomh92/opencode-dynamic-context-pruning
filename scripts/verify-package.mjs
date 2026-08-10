@@ -61,7 +61,7 @@ function assertRepoFilesExist() {
 }
 
 function assertPackageJsonShape() {
-    const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
+    const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf-8"))
 
     if (pkg.main !== "./dist/index.js") {
         fail(`package.json main must remain ./dist/index.js, found ${pkg.main ?? "<missing>"}`)
@@ -153,7 +153,7 @@ function findPackageInfo(packageName, importerPath) {
     while (true) {
         const manifest = path.join(current, "package.json")
         if (existsSync(manifest)) {
-            const info = JSON.parse(readFileSync(manifest, "utf8"))
+            const info = JSON.parse(readFileSync(manifest, "utf-8"))
             packageInfoCache.set(cacheKey, info)
             return info
         }
@@ -183,7 +183,7 @@ function validateRuntimeImportGraph() {
         if (!filePath || seen.has(filePath)) continue
         seen.add(filePath)
 
-        const source = readFileSync(filePath, "utf8")
+        const source = readFileSync(filePath, "utf-8")
         for (const entry of getImportStatements(source)) {
             if (entry.specifier.startsWith(".")) {
                 pending.push(resolveLocalImport(filePath, entry.specifier))
@@ -213,7 +213,7 @@ function validateRuntimeImportGraph() {
 function validatePackedFiles() {
     const output = execFileSync("npm", ["pack", "--dry-run", "--json"], {
         cwd: root,
-        encoding: "utf8",
+        encoding: "utf-8",
     })
 
     const [result] = JSON.parse(output)

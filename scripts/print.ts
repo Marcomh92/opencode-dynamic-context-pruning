@@ -1,5 +1,3 @@
-#!/usr/bin/env npx tsx
-
 import { Logger } from "../lib/logger"
 import { renderSystemPrompt } from "../lib/prompts"
 import { PromptStore, PROMPT_KEYS, type PromptKey, type RuntimePrompts } from "../lib/prompts/store"

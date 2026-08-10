@@ -1,8 +1,8 @@
-import { writeFile, mkdir, appendFile } from "fs/promises"
+import { mkdir, appendFile } from "fs/promises"
 import { join } from "path"
-import { existsSync } from "fs"
 import { homedir } from "os"
 import { createHash } from "node:crypto"
+import { writeFileAtomic } from "./state/persistence"
 
 export class Logger {
     private logDir: string
@@ -38,9 +38,7 @@ export class Logger {
     }
 
     private async ensureLogDir() {
-        if (!existsSync(this.logDir)) {
-            await mkdir(this.logDir, { recursive: true })
-        }
+        await mkdir(this.logDir, { recursive: true })
     }
 
     private formatData(data?: any): string {
@@ -128,12 +126,10 @@ export class Logger {
             const logLine = `${timestamp} ${level.padEnd(5)} ${component}: ${message}${dataStr ? " | " + dataStr : ""}\n`
 
             const dailyLogDir = join(this.logDir, "daily")
-            if (!existsSync(dailyLogDir)) {
-                await mkdir(dailyLogDir, { recursive: true })
-            }
+            await mkdir(dailyLogDir, { recursive: true })
 
             const logFile = join(dailyLogDir, `${new Date().toISOString().split("T")[0]}.log`)
-            await writeFile(logFile, logLine, { flag: "a" })
+            await appendFile(logFile, logLine, { encoding: "utf-8" })
         } catch (error) {}
     }
 
@@ -152,9 +148,7 @@ export class Logger {
         try {
             await this.ensureLogDir()
             const diagDir = join(this.logDir, "diagnostic")
-            if (!existsSync(diagDir)) {
-                await mkdir(diagDir, { recursive: true })
-            }
+            await mkdir(diagDir, { recursive: true })
             const today = new Date().toISOString().split("T")[0]
             const sessionShort = ((event.sessionId as string | null) || "unknown").substring(0, 16)
             const diagFile = join(diagDir, `${today}-${sessionShort}.jsonl`)
@@ -317,15 +311,13 @@ export class Logger {
             }
 
             const contextDir = join(this.logDir, "context", sessionId)
-            if (!existsSync(contextDir)) {
-                await mkdir(contextDir, { recursive: true })
-            }
+            await mkdir(contextDir, { recursive: true })
             const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
             const contextFile = join(
                 contextDir,
                 `${timestamp}-${++Logger.saveContextSequence}.json`,
             )
-            await writeFile(contextFile, `${payload}\n`)
+            await writeFileAtomic(contextFile, `${payload}\n`)
             Logger.lastWriteMsBySession.set(sessionId, Date.now())
         } catch (error) {}
     }

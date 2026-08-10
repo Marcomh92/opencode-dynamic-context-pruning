@@ -6,8 +6,9 @@ This directory tracks known bugs, limitations, and design trade-offs in the `@ta
 
 ## Active Issues
 
-| ID  | Title | Severity | Status |
-| --- | ----- | -------- | ------ |
+| ID      | Title | Severity | Status |
+| ------- | ----- | -------- | ------ |
+| BUG-093 | `verify-package.mjs` carve-out at line 193 checks the wrong path for `jsonc-parser` (bare specifier, not deep ESM) | Medium | Open |
 
 ## Severity Legend
 
@@ -43,7 +44,7 @@ The following reports describe the same root cause or surface. Fix once, mark th
 | ----------------------------------- | ------------------------- | --------------------------------------------------------------------- |
 | **Prettier drift**                  | BUG-004, BUG-042          | Add `.prettierignore` first, then `npx prettier --write .` as one PR  |
 | **Subagent cache key separator**    | BUG-015, BUG-076          | Same fix at `lib/subagents/cache-key.ts:6-8`                          |
-| **`findOpencodeDir` POSIX-only**    | BUG-016, BUG-058          | `while (current !== "/")` → `while (true)` in both copies             |
+| **`findOpencodeDir` POSIX-only**    | BUG-016, BUG-058          | `while (current !== "/")` to `while (true)` in both copies             |
 | **Manual-mode cache drift**         | BUG-006, BUG-024, BUG-050 | Route all writers through `effectiveManualMode(state)`                |
 | **Manual-mode persistence cluster** | BUG-030, BUG-032, BUG-034 | Pick one persistence shape and use it consistently                    |
 | **Transform pipeline fragility**    | BUG-025, BUG-028, BUG-074 | Outer try/catch + sentinel return on capacity                         |
@@ -87,7 +88,7 @@ The following reports describe the same root cause or surface. Fix once, mark th
 | BUG-028 | 13-step transform pipeline has no outer try/catch; any thrown error breaks the LLM call mid-session                                                        | Medium                        | Fixed  | 2026-08-07 |
 | BUG-029 | `applyPendingManualTrigger` overwrites wrong user message in narrow race window                                                                            | Medium                        | Fixed  | 2026-08-07 |
 | BUG-030 | `loadManualModeSetting` reads legacy `manualMode` field only, ignoring v2 `userForced`                                                                     | Medium                        | Fixed  | 2026-08-07 |
-| BUG-031 | `recoveryForced` and streak counters ARE persisted+restored, contradicting v1→v2 boundary                                                                  | Medium                        | Fixed  | 2026-08-07 |
+| BUG-031 | `recoveryForced` and streak counters ARE persisted+restored, contradicting v1/v2 boundary                                                                  | Medium                        | Fixed  | 2026-08-07 |
 | BUG-032 | `handleManualToggleCommand` no-arg branch can clear a pending `manualMode === "compress-pending"`                                                          | Medium                        | Fixed  | 2026-08-07 |
 | BUG-033 | `modelMaxLimits` / `modelMinLimits` merge is replace-semantics; project layer adding one model wipes globals                                               | Medium                        | Fixed  | 2026-08-07 |
 | BUG-034 | `saveManualModeSetting` coerces `manualMode` via `!!` to `boolean`; `saveSessionState` uses `=== "active"`                                                 | Medium                        | Fixed  | 2026-08-07 |
@@ -95,7 +96,7 @@ The following reports describe the same root cause or surface. Fix once, mark th
 | BUG-036 | `Logger.getCallerFile` allocates a fresh `Error` stack on every log call                                                                                   | Medium                        | Fixed  | 2026-08-07 |
 | BUG-037 | `isSubAgentSession` SDK call has no timeout/AbortSignal                                                                                                    | Medium                        | Fixed  | 2026-08-07 |
 | BUG-038 | `lib/ui/utils.ts` uses `as any` in production code (cast unnecessary; SDK field is declared)                                                               | **Low**                       | Fixed  | 2026-08-07 |
-| BUG-039 | INV-10 `wrapCompressedSummary` ↔ `restoreSummary` round-trip not tested; **also hides live production bug** (`restoreSummary` regex leaves opening `` tag) | **High priority (escalated)** | Fixed  | 2026-08-07 |
+| BUG-039 | INV-10 `wrapCompressedSummary` <-> `restoreSummary` round-trip not tested; **also hides live production bug** (`restoreSummary` regex leaves opening `` tag) | **High priority (escalated)** | Fixed  | 2026-08-07 |
 | BUG-040 | INV-5/6/7/8 covered indirectly but no test references `INV-N` identifiers                                                                                  | **Low**                       | Fixed  | 2026-08-07 |
 | BUG-041 | Multiple source files have no direct test coverage (priority table had 2 false rows)                                                                       | **Low**                       | Fixed  | 2026-08-07 |
 | BUG-042 | Format drift blocks all PRs until reformatted; needs a meta-PR (companion to BUG-004)                                                                      | Medium                        | Fixed  | 2026-08-07 |
@@ -140,15 +141,15 @@ The following reports describe the same root cause or surface. Fix once, mark th
 | BUG-081 | Document case-sensitivity policy for protected patterns                                                                                                    | Suggestion                    | Fixed  | 2026-08-07 |
 | BUG-082 | Add runtime assertion that `INTERNAL_PROMPT_EXTENSIONS` keys disjoint from `PROMPT_KEYS`                                                                   | Suggestion                    | Fixed  | 2026-08-07 |
 | BUG-083 | Log a warning when `MESSAGE_REF_MAX_INDEX` is approached (one-shot flag)                                                                                   | Suggestion                    | Fixed  | 2026-08-07 |
-| BUG-084 | Validate `protectedTools` entries at config load with regex (`/^\S+$/`, not the report's tighter charset)                                                  | Suggestion                    | Fixed  | 2026-08-07 |
+| BUG-084 | Validate `protectedTools` entries at config load with regex (`/^S+$/`, not the report's tighter charset)                                                  | Suggestion                    | Fixed  | 2026-08-07 |
 | BUG-085 | lib/compress/index.ts re-exports type-only `ToolContext` as a value                                                                                        | High                          | Fixed  | 2026-08-07 |
 | BUG-086 | compression-timing-queue-eaten-by-unconditional-delete                                                                                                     | Medium                        | Fixed  | 2026-08-07 |
 | BUG-087 | forked-session-context-bloat                                                                                                                               | Medium                        | Fixed  | 2026-08-07 |
 | BUG-089 | fork state inheritance protocol layer (residual from BUG-087 after UX mitigation reverts)                                                                  | Medium                        | Fixed  | 2026-08-08 |
-| BUG-090 | persistence-side fork-suffix strip breaks multi-generation inheritance (move strip to scan side per BUG-090 §"Fix path" option 2)                          | Medium                        | Fixed  | 2026-08-08 |
+| BUG-090 | persistence-side fork-suffix strip breaks multi-generation inheritance (move strip to scan side per BUG-090 Fix path option 2)                             | Medium                        | Fixed  | 2026-08-08 |
 | BUG-091 | rekeyed boundary refs must preserve m-NNNN refs that syntactically match bN                                                                                | Low                           | Fixed  | 2026-08-10 |
 | BUG-088 | `loadAllSessionStats` double-counts `totalPruneTokens` when compression blocks are inherited across forked sessions                                        | Low                           | Fixed  | 2026-08-10 |
-| BUG-092 | Fork candidate scan is O(entire state dir) with no bound — log spam + latency grows with months of use                                                     | Low                           | Fixed  | 2026-08-10 |
+| BUG-092 | Fork candidate scan is O(entire state dir) with no bound - log spam + latency grows with months of use                                                     | Low                           | Fixed  | 2026-08-10 |
 
 _Move files to `fixed/` and add a row here when resolved._
 

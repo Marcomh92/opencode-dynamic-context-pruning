@@ -20,6 +20,9 @@
             "import": "./tui.tsx"
         }
     },
+    "engines": {
+        "node": ">=20"
+    },
     "scripts": {
         "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
         "build": "npm run clean && tsup && tsc --emitDeclarationOnly",

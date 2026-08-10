@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, realpathSync } from "fs"
+import { existsSync, mkdirSync, readFileSync, statSync, realpathSync } from "fs"
 import { join, dirname } from "path"
 import { homedir } from "os"
 import { createHash } from "node:crypto"
 import type { Logger } from "../logger"
+import { writeFileAtomicSync } from "../state/persistence"
 import { SYSTEM as SYSTEM_PROMPT } from "./system"
 import { COMPRESS_RANGE as COMPRESS_RANGE_PROMPT } from "./compress-range"
 import { COMPRESS_MESSAGE as COMPRESS_MESSAGE_PROMPT } from "./compress-message"
@@ -497,7 +498,7 @@ export class PromptStore {
                 if (existing === managedContent) {
                     continue
                 }
-                writeFileSync(filePath, managedContent, "utf-8")
+                writeFileAtomicSync(filePath, managedContent)
             } catch {
                 this.logger.warn("Failed to write default prompt file", {
                     key: definition.key,
@@ -512,7 +513,7 @@ export class PromptStore {
         try {
             const existing = readFileIfExists(readmePath)
             if (existing !== readmeContent) {
-                writeFileSync(readmePath, readmeContent, "utf-8")
+                writeFileAtomicSync(readmePath, readmeContent)
             }
         } catch {
             this.logger.warn("Failed to write defaults README", {

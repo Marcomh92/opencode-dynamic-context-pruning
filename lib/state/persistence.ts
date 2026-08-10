@@ -5,7 +5,7 @@
  */
 
 import * as fs from "fs/promises"
-import { existsSync } from "fs"
+import { existsSync, openSync, writeSync, fsyncSync, closeSync, renameSync, unlinkSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
 import type { CompressionBlock, PrunedMessageEntry, SessionState, SessionStats } from "./types"
@@ -76,9 +76,7 @@ function resolveStorageDir(): string {
 
 async function ensureStorageDir(): Promise<void> {
     const dir = resolveStorageDir()
-    if (!existsSync(dir)) {
-        await fs.mkdir(dir, { recursive: true })
-    }
+    await fs.mkdir(dir, { recursive: true })
 }
 
 function getSessionFilePath(sessionId: string): string {
@@ -154,6 +152,142 @@ export async function sweepExpiredStateFiles(
     }
 }
 
+// ponytail: tmp-in-same-dir + rename-with-retry covers process-death (Linux) + transient Windows lock contention; opt-in fsync for power-loss durability. Cross-process writer → stdlib wx-lockfile.
+export async function writeFileAtomic(
+    destPath: string,
+    content: string,
+    options?: { encoding?: BufferEncoding; fsync?: boolean },
+): Promise<void> {
+    const encoding = options?.encoding ?? "utf-8"
+    const fsync = options?.fsync ?? false
+    const tmpPath = `${destPath}.tmp-${process.pid}`
+
+    let handle: fs.FileHandle | undefined
+    try {
+        handle = await fs.open(tmpPath, "w", 0o644)
+        await handle.writeFile(content, encoding)
+        if (fsync) {
+            await handle.sync()
+        }
+        await handle.close()
+        handle = undefined
+    } catch (err) {
+        if (handle) {
+            try {
+                await handle.close()
+            } catch {
+                /* ignore close-after-fail */
+            }
+        }
+        try {
+            await fs.unlink(tmpPath)
+        } catch {
+            /* tmp may not exist */
+        }
+        throw err
+    }
+
+    const MAX_ATTEMPTS = 5
+    let lastError: unknown
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            await fs.rename(tmpPath, destPath)
+            return
+        } catch (err) {
+            const code = (err as NodeJS.ErrnoException)?.code
+            if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") {
+                try {
+                    await fs.unlink(tmpPath)
+                } catch {
+                    /* ignore */
+                }
+                throw err
+            }
+            lastError = err
+            if (attempt < MAX_ATTEMPTS) {
+                await new Promise((resolve) => setTimeout(resolve, 10 * attempt))
+            }
+        }
+    }
+    try {
+        await fs.unlink(tmpPath)
+    } catch {
+        /* ignore */
+    }
+    throw lastError
+}
+
+// ponytail: sync sibling for code paths (PromptStore.ensureDefaultFiles) that
+// run inside a sync constructor and cannot await without changing the public
+// API. Same retry semantics as writeFileAtomic; uses Atomics.wait for the
+// backoff so the call stays sync. Add writeFileAtomic-style async variants if
+// callers migrate.
+export function writeFileAtomicSync(
+    destPath: string,
+    content: string,
+    options?: { encoding?: BufferEncoding; fsync?: boolean },
+): void {
+    const encoding = options?.encoding ?? "utf-8"
+    const fsync = options?.fsync ?? false
+    const tmpPath = `${destPath}.tmp-${process.pid}`
+
+    let fd: number | undefined
+    try {
+        fd = openSync(tmpPath, "w", 0o644)
+        writeSync(fd, Buffer.from(content, encoding))
+        if (fsync) {
+            fsyncSync(fd)
+        }
+        closeSync(fd)
+        fd = undefined
+    } catch (err) {
+        if (fd !== undefined) {
+            try {
+                closeSync(fd)
+            } catch {
+                /* ignore close-after-fail */
+            }
+        }
+        try {
+            unlinkSync(tmpPath)
+        } catch {
+            /* tmp may not exist */
+        }
+        throw err
+    }
+
+    const MAX_ATTEMPTS = 5
+    let lastError: unknown
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            renameSync(tmpPath, destPath)
+            return
+        } catch (err) {
+            const code = (err as NodeJS.ErrnoException)?.code
+            if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") {
+                try {
+                    unlinkSync(tmpPath)
+                } catch {
+                    /* ignore */
+                }
+                throw err
+            }
+            lastError = err
+            if (attempt < MAX_ATTEMPTS) {
+                const sab = new SharedArrayBuffer(4)
+                const view = new Int32Array(sab)
+                Atomics.wait(view, 0, 0, 10 * attempt)
+            }
+        }
+    }
+    try {
+        unlinkSync(tmpPath)
+    } catch {
+        /* ignore */
+    }
+    throw lastError
+}
+
 async function writePersistedSessionState(
     sessionId: string,
     state: PersistedSessionState,
@@ -163,7 +297,7 @@ async function writePersistedSessionState(
 
     const filePath = getSessionFilePath(sessionId)
     const content = JSON.stringify(state, null, 2)
-    await fs.writeFile(filePath, content, "utf-8")
+    await writeFileAtomic(filePath, content, { fsync: true })
 
     logger.info("Saved session state to disk", {
         sessionId,
@@ -255,8 +389,13 @@ export async function saveSessionState(
         // MY_CHANGELOG.md M2.5c entry under "residual race".
         try {
             const filePath = getSessionFilePath(sessionState.sessionId)
-            if (existsSync(filePath)) {
-                const content = await fs.readFile(filePath, "utf-8")
+            let content: string | undefined
+            try {
+                content = await fs.readFile(filePath, "utf-8")
+            } catch (err: unknown) {
+                if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err
+            }
+            if (content !== undefined) {
                 const onDisk = JSON.parse(content) as PersistedSessionState
                 if (typeof onDisk.stats?.totalPruneTokens === "number") {
                     state.stats.totalPruneTokens = Math.max(
@@ -324,11 +463,14 @@ export async function loadSessionState(
     try {
         const filePath = getSessionFilePath(sessionId)
 
-        if (!existsSync(filePath)) {
-            return null
+        let content: string
+        try {
+            content = await fs.readFile(filePath, "utf-8")
+        } catch (err: unknown) {
+            if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return null
+            throw err
         }
 
-        const content = await fs.readFile(filePath, "utf-8")
         const state = JSON.parse(content) as PersistedSessionState
 
         const hasPruneTools = state?.prune?.tools && typeof state.prune.tools === "object"
@@ -543,18 +685,22 @@ export async function saveManualModeSetting(
  *  user-driven caller (a `/dcp manual on/off` toggle, or a TUI panel click)
  *  knows the file shape (the save path produced it), and the schema gate's
  *  job is to protect the hot transform path — not a user-driven toggle.
- *  Just `existsSync` + `readFile` + `JSON.parse`. Returns null on a missing
- *  file or a malformed parse; never throws. */
+ *  Uses a single `readFile` + `try/catch ENOENT` to avoid the TOCTOU race
+ *  between `existsSync` and `readFile`. Returns null on a missing file or
+ *  a malformed parse; never throws for missing-file. */
 export async function loadSessionStateRaw(
     sessionId: string,
     logger: Logger,
 ): Promise<PersistedSessionState | null> {
     try {
         const filePath = getSessionFilePath(sessionId)
-        if (!existsSync(filePath)) {
-            return null
+        let content: string
+        try {
+            content = await fs.readFile(filePath, "utf-8")
+        } catch (err: unknown) {
+            if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return null
+            throw err
         }
-        const content = await fs.readFile(filePath, "utf-8")
         return JSON.parse(content) as PersistedSessionState
     } catch (error: any) {
         logger.warn("Failed to read raw session state", {
