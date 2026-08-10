@@ -26,6 +26,7 @@ import {
     applyCompressionState,
     wrapCompressedSummary,
 } from "./state"
+import { resolveAnchorMessageId } from "./search"
 import type { CompressRangeToolArgs } from "./types"
 
 function buildSchema() {
@@ -180,6 +181,33 @@ export function createCompressRangeTool(ctx: ToolContext): ReturnType<typeof too
                 const storedSummary = wrapCompressedSummary(blockId, preparedPlan.finalSummary)
                 const summaryTokens = countTokens(storedSummary)
 
+                // v2 timestamp fields (PLAN §4.4). start/end map from the resolved
+                // boundary references — entry.startId / entry.endId are the
+                // user-facing refs ("m0005", "b2") and would miss the SDK-keyed
+                // rawMessagesById. selection.startReference / selection.endReference
+                // carry the underlying SDK message IDs via resolveAnchorMessageId.
+                const startMessageId = resolveAnchorMessageId(preparedPlan.selection.startReference)
+                const endMessageId = resolveAnchorMessageId(preparedPlan.selection.endReference)
+                const startTime =
+                    searchContext.rawMessagesById.get(startMessageId)?.info.time.created ?? 0
+                const endTime =
+                    searchContext.rawMessagesById.get(endMessageId)?.info.time.created ?? 0
+                const anchorTime =
+                    searchContext.rawMessagesById.get(preparedPlan.anchorMessageId)?.info.time
+                        .created ?? 0
+                const compressTime =
+                    searchContext.rawMessagesById.get(toolCtx.messageID)?.info.time.created ?? 0
+                const effectiveTimeMs = preparedPlan.selection.messageIds
+                    .map((id) => searchContext.rawMessagesById.get(id)?.info.time.created ?? 0)
+                    .filter((t) => t !== 0)
+                // ponytail: at apply time, direct == effective. The block's
+                // directMessageIds / directToolIds shrink to "newly active"
+                // inside applyCompressionState, but the timestamp arrays are a
+                // one-shot snapshot taken here; no rebuild on direct/effective
+                // divergence. Add a recompute step if downstream consumers need
+                // exact direct/effective parity.
+                const directTimeMs = effectiveTimeMs.slice()
+
                 const applied = applyCompressionState(
                     ctx.state,
                     {
@@ -192,6 +220,12 @@ export function createCompressRangeTool(ctx: ToolContext): ReturnType<typeof too
                         compressMessageId: toolCtx.messageID,
                         compressCallId: callId,
                         summaryTokens,
+                        startTime,
+                        endTime,
+                        effectiveTimeMs,
+                        directTimeMs,
+                        anchorTime,
+                        compressTime,
                     },
                     preparedPlan.selection,
                     preparedPlan.anchorMessageId,

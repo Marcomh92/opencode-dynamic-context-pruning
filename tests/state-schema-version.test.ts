@@ -81,12 +81,16 @@ test("loadSessionState returns null when forkSchemaVersion is 1 (old shape)", as
     rmSync(join(STORAGE_DIR, `${sessionID}.json`), { force: true })
 })
 
-test("loadSessionState returns null when forkSchemaVersion is 4 (future shape)", async () => {
-    const sessionID = `ses_v4_${Date.now()}`
+test("loadSessionState returns null when forkSchemaVersion is 5 (future shape)", async () => {
+    // BUG-089: FORK_SCHEMA_VERSION bumped from 3 to 4 to absorb the 6 new
+    // timestamp fields on CompressionBlock. A future v5 file (the next shape
+    // bump) must continue to be dropped by the schema gate — pre-bump
+    // redaction is the plan §7 row 1 "drop, don't migrate" contract.
+    const sessionID = `ses_v5_${Date.now()}`
     writeStateFile(
         sessionID,
         buildMinimalState({
-            forkSchemaVersion: 4,
+            forkSchemaVersion: 5,
         }),
     )
 
@@ -176,9 +180,13 @@ test("loadSessionState returns null when required structural fields are missing"
 })
 
 test("FORK_SCHEMA_VERSION is the current persisted-state shape version", () => {
-    assert.equal(FORK_SCHEMA_VERSION, 3)
+    // BUG-089: bumped from 3 to 4 to absorb the 6 new timestamp fields on
+    // CompressionBlock (startTime, endTime, effectiveTimeMs, directTimeMs,
+    // anchorTime, compressTime). See lib/state/types.ts FORK_SCHEMA_VERSION
+    // doc comment for the full v4 changelog.
+    assert.equal(FORK_SCHEMA_VERSION, 4)
 })
-// Logic Verified: loadSessionState returns null for forkSchemaVersion 1/4/missing and returns state when it matches FORK_SCHEMA_VERSION (with default fields).
-// Bugs Documented: none.
+// Logic Verified: loadSessionState returns null for forkSchemaVersion 1/5/missing and returns state when it matches FORK_SCHEMA_VERSION (with default fields).
+// Bugs Documented: BUG-089 (schema bump v3→v4 absorbs new CompressionBlock timestamp fields).
 // Fakes Updated: none
 // Review Status: pending independent review.

@@ -105,4 +105,14 @@ export interface CompressionStateInput {
     compressMessageId: string
     compressCallId?: string
     summaryTokens: number
+    // Fork-state-inheritance keys (BUG-089 plan §4.4). Populated by the
+    // tool-layer call sites (lib/compress/range.ts:183-201,
+    // lib/compress/message.ts:142-160) from the canonical message timestamps.
+    // Optional with safe defaults so older callers stay compatible.
+    startTime?: number
+    endTime?: number
+    effectiveTimeMs?: number[]
+    directTimeMs?: number[]
+    anchorTime?: number
+    compressTime?: number
 }

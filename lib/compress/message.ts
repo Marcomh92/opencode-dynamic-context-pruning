@@ -139,6 +139,25 @@ export function createCompressMessageTool(ctx: ToolContext): ReturnType<typeof t
                 const storedSummary = wrapCompressedSummary(blockId, summaryWithTools)
                 const summaryTokens = countTokens(storedSummary)
 
+                // v2 timestamp fields (PLAN §4.4). In message mode
+                // startId === endId === anchorMessageId (see literal above),
+                // so start/end/anchor all resolve to the same SDK message ID.
+                // plan.entry.messageId is the user-facing ref ("m0005") and
+                // would miss the SDK-keyed rawMessagesById; plan.anchorMessageId
+                // is the underlying SDK message ID.
+                const anchorTime =
+                    searchContext.rawMessagesById.get(plan.anchorMessageId)?.info.time.created ?? 0
+                const startTime = anchorTime
+                const endTime = anchorTime
+                const compressTime =
+                    searchContext.rawMessagesById.get(toolCtx.messageID)?.info.time.created ?? 0
+                const effectiveTimeMs = plan.selection.messageIds
+                    .map((id) => searchContext.rawMessagesById.get(id)?.info.time.created ?? 0)
+                    .filter((t) => t !== 0)
+                // ponytail: at apply time, direct == effective. See the
+                // matching comment in lib/compress/range.ts.
+                const directTimeMs = effectiveTimeMs.slice()
+
                 const applied = applyCompressionState(
                     ctx.state,
                     {
@@ -151,6 +170,12 @@ export function createCompressMessageTool(ctx: ToolContext): ReturnType<typeof t
                         compressMessageId: toolCtx.messageID,
                         compressCallId: callId,
                         summaryTokens,
+                        startTime,
+                        endTime,
+                        effectiveTimeMs,
+                        directTimeMs,
+                        anchorTime,
+                        compressTime,
                     },
                     plan.selection,
                     plan.anchorMessageId,

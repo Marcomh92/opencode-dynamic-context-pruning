@@ -1,5 +1,6 @@
-import type { CompressionBlock, PruneMessagesState, SessionState } from "../state"
+import type { Logger } from "../logger"
 import { formatBlockRef, formatMessageIdTag } from "../message-ids"
+import type { CompressionBlock, PruneMessagesState, SessionState } from "../state"
 import { flushPruneStats } from "../state/utils"
 import type { AppliedCompressionResult, CompressionStateInput, SelectionResolution } from "./types"
 
@@ -133,6 +134,12 @@ export function applyCompressionState(
         directToolIds: [],
         effectiveMessageIds: [...effectiveMessageIds],
         effectiveToolIds: [...effectiveToolIds],
+        startTime: input.startTime ?? 0,
+        endTime: input.endTime ?? 0,
+        effectiveTimeMs: input.effectiveTimeMs ?? [],
+        directTimeMs: input.directTimeMs ?? [],
+        anchorTime: input.anchorTime ?? 0,
+        compressTime: input.compressTime ?? 0,
         createdAt,
         summary,
     }
@@ -283,5 +290,111 @@ export function applyCompressionState(
         messageIds: selection.messageIds,
         newlyCompressedMessageIds,
         newlyCompressedToolIds,
+    }
+}
+
+/**
+ * Merges compression blocks inherited from a forked parent session into
+ * `state`. Per DPP-006 / PAT-002 this is the third sanctioned writer of
+ * `state.prune.messages.*` (next to `applyCompressionState` and
+ * `syncCompressionBlocks`); ADR-003 records the amendment. Upholds the
+ * invariants `applyCompressionState` does:
+ *
+ * - Monotonic block / run IDs (no `+1`; the allocator returns and increments).
+ * - Anchor index consistency (`activeByAnchorMessageId` populated only when
+ *   `anchorMessageId !== ""`).
+ * - Block-graph closure assumed — `filterInheritableBlocks` (Stage A-2) drops
+ *   any block referencing a non-inheritable sibling before this is called.
+ * - `byMessageId` rebuild from each block's `effectiveMessageIds`.
+ *
+ * `parentSessionId` is accepted for the agreed-upon signature; the
+ * in-memory `state.inheritedFrom` is set separately by `lib/state/inherit.ts`.
+ */
+export function mergeInheritedBlocks(
+    state: SessionState,
+    blocks: CompressionBlock[],
+    parentSessionId: string,
+    logger?: Logger,
+): void {
+    const pm = state.prune.messages
+
+    let parentMaxBlockId = 0
+    let parentMaxRunId = 0
+    for (const b of blocks) {
+        if (b.blockId > parentMaxBlockId) parentMaxBlockId = b.blockId
+        if (b.runId > parentMaxRunId) parentMaxRunId = b.runId
+    }
+    // ponytail: nextBlockId is NEXT-FREE (allocateBlockId returns then increments).
+    // mirror loadPruneMessagesState:382-387 which uses `blockId + 1`.
+    if (parentMaxBlockId >= pm.nextBlockId) pm.nextBlockId = parentMaxBlockId + 1
+    if (parentMaxRunId >= pm.nextRunId) pm.nextRunId = parentMaxRunId + 1
+
+    let duplicateSkips = 0
+    for (const block of blocks) {
+        if (pm.blocksById.has(block.blockId)) {
+            // Defensive: a duplicate blockId should not happen because
+            // rekeyBlocksToFork produces unique IDs. Skip rather than overwrite.
+            duplicateSkips++
+            continue
+        }
+
+        pm.blocksById.set(block.blockId, block)
+        if (block.active) {
+            pm.activeBlockIds.add(block.blockId)
+            if (block.anchorMessageId !== "") {
+                pm.activeByAnchorMessageId.set(block.anchorMessageId, block.blockId)
+            }
+        }
+
+        if (!block.active) {
+            continue
+        }
+
+        // Rebuild byMessageId entries from effectiveMessageIds. The pattern
+        // mirrors applyCompressionState :191-228. Per-message tokenCount is
+        // not available from the persisted parent file; we approximate by
+        // distributing the block's compressedTokens evenly across its
+        // effective messages.
+        //
+        // ponytail: tokenCount per message is approximated. Subsequent prunes
+        // on B will re-derive correct token counts via state.toolParameters
+        // (see lib/messages/prune.ts). Add per-message tokenCount persistence
+        // when BUG-XXX lands.
+        const perMessageTokens =
+            block.effectiveMessageIds.length > 0
+                ? Math.floor(block.compressedTokens / block.effectiveMessageIds.length)
+                : 0
+
+        for (const messageId of block.effectiveMessageIds) {
+            const existing = pm.byMessageId.get(messageId)
+            if (existing) {
+                if (!existing.allBlockIds.includes(block.blockId)) {
+                    existing.allBlockIds.push(block.blockId)
+                }
+                if (!existing.activeBlockIds.includes(block.blockId)) {
+                    existing.activeBlockIds.push(block.blockId)
+                }
+                if (perMessageTokens > existing.tokenCount) {
+                    existing.tokenCount = perMessageTokens
+                }
+                continue
+            }
+            pm.byMessageId.set(messageId, {
+                tokenCount: perMessageTokens,
+                allBlockIds: [block.blockId],
+                activeBlockIds: [block.blockId],
+            })
+        }
+    }
+
+    // ponytail: prune.tools is NOT updated here. The rebuild path at
+    // syncPruneToolsFromActiveBlocks (lib/state/utils.ts) still runs on
+    // subsequent prunes (defensive). Inherited blocks' directToolIds are the
+    // source of truth — copying prune.tools verbatim is the responsibility of
+    // lib/state/inherit.ts, not this funnel.
+    if (logger && duplicateSkips > 0) {
+        logger.debug(
+            `fork inheritance: skipped ${duplicateSkips} duplicate block(s) during merge (parent ${parentSessionId})`,
+        )
     }
 }

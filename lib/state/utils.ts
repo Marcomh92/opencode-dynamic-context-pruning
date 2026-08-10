@@ -51,17 +51,43 @@ export function serializePruneMessagesState(
     }
 }
 
-/** Determines whether a session has a parent subagent session, bounded by the SDK timeout. */
-export async function isSubAgentSession(client: any, sessionID: string): Promise<boolean> {
+/** Returns the session's parentID and title in one SDK roundtrip.
+ *  Used by fork-state-inheritance (BUG-089 plan §4.1) to fetch the title
+ *  that's needed for fork detection (`detectParentSessionFromTitle`) alongside
+ *  the existing subagent check. Bounded by a 2s SDK timeout (matches the
+ *  existing pattern at `lib/hooks.ts:244`).
+ *
+ *  ponytail: this duplicates `isSubAgentSession`'s SDK roundtrip. Acceptable
+ *  because (a) one call per session transition is below noise floor, (b)
+ *  the title is needed for fork-detection anyway. If both pieces of metadata
+ *  ever need to be fetched independently, split — but the SDK path is slow
+ *  enough that one call wins for the common case. */
+export async function getSessionMetadata(
+    client: any,
+    sessionID: string,
+): Promise<{ isSubAgent: boolean; parentID?: string; title?: string }> {
     try {
         const result = await client.session.get({
             path: { id: sessionID },
             signal: AbortSignal.timeout(2000),
         })
-        return !!result.data?.parentID
+        const parentID = result.data?.parentID
+        const title = result.data?.title
+        return {
+            isSubAgent: !!parentID,
+            ...(typeof parentID === "string" ? { parentID } : {}),
+            ...(typeof title === "string" ? { title } : {}),
+        }
     } catch (error: any) {
-        return false
+        return { isSubAgent: false }
     }
+}
+
+/** Determines whether a session has a parent subagent session, bounded by the SDK timeout.
+ *  Thin wrapper around `getSessionMetadata` (BUG-089) — preserves the existing
+ *  call sites and boolean-only contract. */
+export async function isSubAgentSession(client: any, sessionID: string): Promise<boolean> {
+    return (await getSessionMetadata(client, sessionID)).isSubAgent
 }
 
 /**
@@ -94,11 +120,14 @@ export function detectParentSessionFromTitle(title: string | undefined | null): 
     if (match === null) {
         return { isForked: false }
     }
-    const parentTitle = match[1]
+    const base = match[1]
     const forkNumber = Number.parseInt(match[2], 10)
     if (!Number.isFinite(forkNumber)) {
         return { isForked: false }
     }
+    // ponytail: depth-N forks use `<base> (fork #N-1)` as parentTitle.
+    // When OpenCode exposes forkedFrom/parentID, this becomes a 2-line SDK call.
+    const parentTitle = forkNumber === 1 ? base : `${base} (fork #${forkNumber - 1})`
     return { isForked: true, parentTitle, forkNumber }
 }
 
@@ -285,6 +314,24 @@ export function loadPruneMessagesState(
                         ? block.deactivatedByBlockId
                         : undefined,
                 summary: typeof block.summary === "string" ? block.summary : "",
+                // BUG-089 — fork-state-inheritance keys (plan §4.4). Defaulted
+                // here with belt-and-suspenders despite the schema gate dropping
+                // pre-v4 files. Pre-v4 files fall through with `0`/`[]` so the
+                // block is still constructed and the range-rebuild path stays
+                // consistent. Costs ~6 lines; saves a debugging round if the
+                // gate ever inches open.
+                startTime: typeof block.startTime === "number" ? block.startTime : 0,
+                endTime: typeof block.endTime === "number" ? block.endTime : 0,
+                effectiveTimeMs: Array.isArray(block.effectiveTimeMs)
+                    ? block.effectiveTimeMs.filter(
+                          (item): item is number => typeof item === "number",
+                      )
+                    : [],
+                directTimeMs: Array.isArray(block.directTimeMs)
+                    ? block.directTimeMs.filter((item): item is number => typeof item === "number")
+                    : [],
+                anchorTime: typeof block.anchorTime === "number" ? block.anchorTime : 0,
+                compressTime: typeof block.compressTime === "number" ? block.compressTime : 0,
             })
         }
     }

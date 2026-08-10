@@ -113,11 +113,17 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Enable user-editable prompt overrides under dcp-prompts directories"
+                },
+                "inheritOnFork": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Allow compression state inheritance when OpenCode forks session A → B (BUG-089). When true (default), B inherits A's blocks; when false, strict session isolation."
                 }
             },
             "default": {
                 "allowSubAgents": false,
-                "customPrompts": false
+                "customPrompts": false,
+                "inheritOnFork": true
             }
         },
         "protectedFilePatterns": {

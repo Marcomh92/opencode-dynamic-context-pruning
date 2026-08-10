@@ -68,6 +68,12 @@ export interface TurnProtection {
 export interface ExperimentalConfig {
     allowSubAgents: boolean
     customPrompts: boolean
+    // BUG-089 (fork-state-inheritance plan §4.8): when true (default), B
+    // inherits A's compression blocks on fork. When false, no SDK roundtrip,
+    // no candidate scan, no inheritance — strict session isolation.
+    // ponytail: default-on per user direction 2026-08-08. Opt-out for users
+    // who specifically want a fork to NOT inherit any state.
+    inheritOnFork: boolean
 }
 
 export interface PluginConfig {
@@ -113,6 +119,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "experimental",
     "experimental.allowSubAgents",
     "experimental.customPrompts",
+    "experimental.inheritOnFork",
     "protectedFilePatterns",
     "commands",
     "commands.enabled",
@@ -321,6 +328,17 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     key: "experimental.customPrompts",
                     expected: "boolean",
                     actual: typeof experimental.customPrompts,
+                })
+            }
+
+            if (
+                experimental.inheritOnFork !== undefined &&
+                typeof experimental.inheritOnFork !== "boolean"
+            ) {
+                errors.push({
+                    key: "experimental.inheritOnFork",
+                    expected: "boolean",
+                    actual: typeof experimental.inheritOnFork,
                 })
             }
         }
@@ -828,6 +846,7 @@ const defaultConfig: PluginConfig = {
     experimental: {
         allowSubAgents: false,
         customPrompts: false,
+        inheritOnFork: true,
     },
     protectedFilePatterns: [],
     compress: {
@@ -1082,6 +1101,7 @@ function mergeExperimental(
     return {
         allowSubAgents: override.allowSubAgents ?? base.allowSubAgents,
         customPrompts: override.customPrompts ?? base.customPrompts,
+        inheritOnFork: override.inheritOnFork ?? base.inheritOnFork,
     }
 }
 

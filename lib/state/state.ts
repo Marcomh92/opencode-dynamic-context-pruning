@@ -1,20 +1,22 @@
+import { applyPendingCompressionDurations } from "../compress/timing"
+import type { PluginConfig } from "../config"
+import type { Logger } from "../logger"
+import { getLastUserMessage } from "../messages/query"
+import { tryInheritFromParent } from "./inherit"
+import { loadManualModeSetting, loadSessionState, saveSessionState } from "./persistence"
 import type { SessionState, ToolParameterEntry, WithParts } from "./types"
 import { CachedSubAgentResult, FORK_SCHEMA_VERSION } from "./types"
-import type { Logger } from "../logger"
-import { applyPendingCompressionDurations } from "../compress/timing"
-import { loadManualModeSetting, loadSessionState, saveSessionState } from "./persistence"
 import {
-    isSubAgentSession,
-    findLastCompactionTimestamp,
-    countTurns,
-    resetOnCompaction,
-    createPruneMessagesState,
-    loadPruneMessagesState,
-    loadPruneMap,
     collectTurnNudgeAnchors,
+    countTurns,
+    createPruneMessagesState,
     effectiveManualMode,
+    findLastCompactionTimestamp,
+    getSessionMetadata,
+    loadPruneMap,
+    loadPruneMessagesState,
+    resetOnCompaction,
 } from "./utils"
-import { getLastUserMessage } from "../messages/query"
 
 export const checkSession = async (
     client: any,
@@ -22,6 +24,7 @@ export const checkSession = async (
     logger: Logger,
     messages: WithParts[],
     manualModeDefault: boolean,
+    config: PluginConfig,
     stateMaxAgeDays: number | null = null,
     allowSubAgents: boolean = false,
 ): Promise<void> => {
@@ -42,6 +45,7 @@ export const checkSession = async (
                 logger,
                 messages,
                 manualModeDefault,
+                config,
                 stateMaxAgeDays,
                 allowSubAgents,
             )
@@ -121,6 +125,15 @@ export function createSessionState(): SessionState {
 export function resetSessionState(state: SessionState): void {
     state.sessionId = null
     state.isSubAgent = false
+    // sessionTitle is in-memory only (never persisted); the fork-inheritance
+    // orchestrator reads it via `detectParentSessionFromTitle`. Reset so a
+    // fork-from-clean-state session doesn't inherit the previous title.
+    state.sessionTitle = undefined
+    // inheritedFrom is in-memory only (never persisted); set by
+    // `tryInheritFromParent` on a successful fork inheritance. Reset so
+    // the next session's status reflects its own lineage, not the prior
+    // session's.
+    state.inheritedFrom = null
     state.manualMode = false
     state.userForced = false
     state.recoveryForced = false
@@ -173,6 +186,7 @@ export async function ensureSessionInitialized(
     logger: Logger,
     messages: WithParts[],
     manualModeEnabled: boolean,
+    config: PluginConfig,
     stateMaxAgeDays: number | null = null,
     allowSubAgents: boolean = false,
 ): Promise<void> {
@@ -180,8 +194,8 @@ export async function ensureSessionInitialized(
         return
     }
 
-    // logger.info("session ID = " + sessionId)
-    // logger.info("Initializing session state", { sessionId: sessionId })
+    logger.info("session ID = " + sessionId)
+    logger.info("Initializing session state", { sessionId: sessionId })
 
     // ponytail: snapshot queued duration updates before resetSessionState
     // wipes pendingByCallId. Without this, BUG-086's queueing contract is
@@ -205,8 +219,15 @@ export async function ensureSessionInitialized(
     state.manualMode = manualModeEnabled ? "active" : false
     state.sessionId = sessionId
 
-    const isSubAgent = await isSubAgentSession(client, sessionId)
+    // Stage A-1's `getSessionMetadata` replaces `isSubAgentSession` and adds
+    // `title` on the same SDK roundtrip (architect flag #14 — the title
+    // fetch was previously a duplicate roundtrip in lib/hooks.ts:240-252).
+    // `sessionTitle` is cached on `state` for the fork-inheritance orchestrator
+    // (`tryInheritFromParent` reads it via `detectParentSessionFromTitle`).
+    const meta = await getSessionMetadata(client, sessionId)
+    const isSubAgent = meta.isSubAgent
     state.isSubAgent = isSubAgent
+    state.sessionTitle = meta.title
     // logger.info("isSubAgent = " + isSubAgent)
 
     // BUG-054: only skip the persisted-state load when the session is a
@@ -224,15 +245,28 @@ export async function ensureSessionInitialized(
 
     const persisted = await loadSessionState(sessionId, logger, stateMaxAgeDays)
     if (persisted === null) {
+        // BUG-089 (fork-state-inheritance plan §4.2 step 7):
+        // Wire inheritance call. Inside `persisted === null` branch (B has
+        // no prior state) — B's own state wins if any exists. Gated on
+        // `experimental.inheritOnFork` (default true per user direction
+        // 2026-08-08). Try/catch wraps everything; inheritance is
+        // best-effort and never blocks the transform.
+        await tryInheritFromParent(
+            state,
+            client,
+            sessionId,
+            logger,
+            messages,
+            config,
+            stateMaxAgeDays,
+        )
         restorePendingCompressionDurations()
         return
     }
 
     // The persisted state's legacy `manualMode: boolean` is the only signal we
     // have for a user-enabled manual mode on load (v1 storage didn't carry
-    // userForced). recoveryForced and the counters are intentionally NOT
-    // restored — they reset on every session load (architect decision: drop,
-    // don't migrate, on the v1→v2 boundary).
+    // userForced).
     if (typeof persisted.manualMode === "boolean") {
         state.userForced = persisted.manualMode
         state.manualMode = persisted.manualMode ? "active" : false
@@ -242,12 +276,27 @@ export async function ensureSessionInitialized(
     // loadSessionState has already filtered out mismatched files, so anything
     // that reaches here is a valid v2 file.
     //
-    // BUG-031: recoveryForced, nonCompactingRunCount, recoveryFadeCounter are
-    // intentionally NOT restored — they are session-local recovery protocol
-    // state that resets on every session load (see also docs/features/
-    // STATE_PERSISTENCE.md and the persistence-side fix in persistence.ts).
+    // v4 (BUG-089): the recovery fields are now round-tripped through
+    // persistence so a forked session (B) can inherit A's recovery state
+    // along with its blocks (fork-state-inheritance plan §4.5). Fork
+    // inheritance reads them via the same defensive `typeof ===` guards in
+    // lib/state/inherit.ts:tryInheritFromParent. See
+    // docs/features/STATE_PERSISTENCE.md for the persisted-vs-in-memory
+    // table. BUG-031 fully superseded at v4: these fields round-trip on
+    // every load, not just on fork.
     if (typeof persisted.userForced === "boolean") {
         state.userForced = persisted.userForced
+    }
+    if (typeof persisted.recoveryForced === "boolean")
+        state.recoveryForced = persisted.recoveryForced
+    if (
+        typeof persisted.nonCompactingRunCount === "number" &&
+        persisted.nonCompactingRunCount >= 0
+    ) {
+        state.nonCompactingRunCount = persisted.nonCompactingRunCount
+    }
+    if (typeof persisted.recoveryFadeCounter === "number" && persisted.recoveryFadeCounter >= 0) {
+        state.recoveryFadeCounter = persisted.recoveryFadeCounter
     }
 
     // Re-derive the manualMode cache from the now-merged flags via the

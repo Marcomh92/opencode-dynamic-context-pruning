@@ -86,6 +86,7 @@ export async function prepareSession(
         ctx.logger,
         rawMessages,
         ctx.config.manualMode.enabled,
+        ctx.config,
         ctx.config.compress.stateMaxAgeDays,
         ctx.config.experimental.allowSubAgents,
     )

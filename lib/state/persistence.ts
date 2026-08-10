@@ -42,10 +42,16 @@ export interface PersistedSessionState {
     manualMode?: boolean
     // v2 fork-protocol fields (issue #573 + #590).
     userForced?: boolean
-    // BUG-031: recoveryForced, nonCompactingRunCount, recoveryFadeCounter are
-    // intentionally NOT persisted — they are session-local recovery protocol
-    // state that resets on every session load. See lib/state/state.ts:208-211
-    // and docs/features/STATE_PERSISTENCE.md.
+    // BUG-089 — recoveryForced / nonCompactingRunCount / recoveryFadeCounter
+    // are now persisted per the fork-state-inheritance plan §4.5 so a forked
+    // session (B) can inherit A's recovery state along with its blocks. The
+    // BUG-031 "session-local reset" rationale is preserved at the load-path
+    // level: when a session is loaded normally (not via fork inheritance),
+    // lib/state/state.ts still resets these fields by default. Inheritance
+    // overrides the reset on the fork path.
+    recoveryForced?: boolean
+    nonCompactingRunCount?: number
+    recoveryFadeCounter?: number
     forkSchemaVersion?: number
     prune: PersistedPrune
     nudges: PersistedNudges
@@ -113,17 +119,29 @@ export async function saveSessionState(
         // that whatever hits disk is the post-flush state.
         flushPruneStats(sessionState.stats)
 
+        // Save the user's session title verbatim — including the "(fork #N)"
+        // suffix. The candidate scan in lib/state/inherit.ts findCandidateParents
+        // strips suffixes when matching (BUG-090). Stripping here would break
+        // multi-generation inheritance (C's parentTitle "Original (fork #1)"
+        // would not match A's "Original" OR B's "Original").
         const state: PersistedSessionState = {
-            sessionName: sessionName,
+            // BUG-089 — when the caller doesn't pass sessionName, default from
+            // the in-memory cache. This is the single edit that fixes the
+            // "sessionName never written" risk per plan §7 row 2 (architect flag #10).
+            // Avoids touching 9 call sites that explicitly pass sessionName today.
+            sessionName: sessionName ?? sessionState.sessionTitle,
             // #590 mirror: only persist `true` when manualMode is genuinely "active".
             // The legacy `manualMode?: boolean` field is preserved for backward compat
             // with older forks; v2 load validation uses forkSchemaVersion instead.
             manualMode: sessionState.manualMode === "active",
             userForced: sessionState.userForced,
-            // BUG-031: recoveryForced + streak counters are intentionally NOT
-            // persisted — they are session-local recovery protocol state that
-            // must reset on every session load (see lib/state/state.ts:208-211
-            // and docs/features/STATE_PERSISTENCE.md).
+            // v4 (BUG-089): recoveryForced, nonCompactingRunCount, recoveryFadeCounter
+            // are persisted so fork inheritance can copy them per plan §4.5.
+            // The downstream consumer (lib/state/inherit.ts tryInheritFromParent)
+            // reads parentState.recoveryForced etc. via defensive `typeof ===` guards.
+            recoveryForced: sessionState.recoveryForced,
+            nonCompactingRunCount: sessionState.nonCompactingRunCount,
+            recoveryFadeCounter: sessionState.recoveryFadeCounter,
             forkSchemaVersion: sessionState.forkSchemaVersion,
             prune: {
                 tools: Object.fromEntries(sessionState.prune.tools),
@@ -147,7 +165,7 @@ export async function saveSessionState(
         // path we already wrote — adds one syscall per save, acceptable
         // because saveSessionState is coalesced per microtask (see
         // coalesceSaveSessionState). The schema-version + age gates are
-        // already passed before this read, so we know the file shape is v3.
+        // already passed before this read, so we know the file shape is v4.
         //
         // Residual cross-process race (acknowledged in plan §3 Fix 2):
         // process A reads disk (= 100), computes max (= 110); process B

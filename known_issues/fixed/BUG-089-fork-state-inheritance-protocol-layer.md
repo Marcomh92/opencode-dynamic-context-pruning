@@ -1,8 +1,27 @@
 # BUG-089: fork state inheritance protocol layer (residual from BUG-087)
 
-**Status:** Open (protocol-layer remainder)
+**Status:** Fixed 2026-08-08
 **Severity:** Medium
 **Component:** lib/hooks.ts (system prompt hint + UX warning), lib/state/state.ts (fork detection), lib/compress/state.ts (compression block shape)
+
+## Resolution (2026-08-08)
+
+Implemented per `docs/plans/fork-state-inheritance.md` and recorded in `docs/DECISIONS/003-fork-state-inheritance.md`. Summary:
+
+- **Always-attempt inheritance.** `experimental.inheritOnFork` defaults to `true`; opt-OUT via `false`. Gated in `lib/state/inherit.ts::tryInheritFromParent`.
+- **Always-pick fallback chain.** `pickParentCandidate` in `lib/state/inherit.ts:167-198`: single → longest exact `time.created` prefix → recency by mtime → graceful give-up only when zero candidates.
+- **Timestamp-anchored predicate.** SQLite probe 2026-08-08 confirmed message IDs are regenerated on fork; only `time.created` survives. `CompressionBlock` gains 6 timestamp fields (`startTime`, `endTime`, `effectiveTimeMs`, `directTimeMs`, `anchorTime`, `compressTime`). Predicate in `lib/state/inherit.ts::filterInheritableBlocks` requires every key timestamp to be present in B's message set + every block-graph reference to resolve in the parent set.
+- **Schema bump to v4.** `FORK_SCHEMA_VERSION = 4` (`lib/state/types.ts:200`). Pre-v4 files DROPPED by the schema gate (`lib/state/persistence.ts:303-316`) per DPP-004 / PAT-008. Honest data loss on upgrade.
+- **`mergeInheritedBlocks` canonical third writer** in `lib/compress/state.ts:312`. Amends DPP-006 / PAT-002 to name the third sanctioned writer of `state.prune.messages.*`.
+- **System-prompt hint removed entirely** (`lib/hooks.ts:162-179` deleted). The hint was wrong in both directions and contradicted the inheritance feature.
+- **Recovery state, prune.tools, stats.totalPruneTokens copied** per the user's one-to-one-copy intent (per user feedback 2026-08-08). Nudge anchors dropped (parent message IDs invalid in B).
+- **Subagent-skip wins** over fork detection (`lib/state/state.ts:237-240` runs before the inheritance orchestrator).
+
+BUG-090 (filed 2026-08-08 during testing) added scan-side suffix-aware matching (`lib/state/inherit.ts:281-288`) so multi-generation inheritance (A→B→C) holds. Multi-generation test in `tests/session-fork.test.ts:395-546` pins §6.21 of the plan.
+
+BUG-088 remains open: copying `stats.totalPruneTokens` per fork inflates the all-time `/dcp stats` display. Recommended fix: Option B (split `sessionOwnPruneTokens` vs `inheritedPruneTokens`). Informational; not a correctness gate.
+
+Tests: `tests/session-fork-inherit.test.ts` (new, ~22 tests for the inheritance orchestrator) + `tests/session-fork.test.ts` (rewritten for always-pick semantics and system-prompt hint absence).
 
 ## Problem
 

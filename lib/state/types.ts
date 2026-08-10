@@ -57,6 +57,19 @@ export interface CompressionBlock {
     deactivatedAt?: number
     deactivatedByBlockId?: number
     summary: string
+    // Fork-state-inheritance keys (BUG-089 plan §4.4). All additive with
+    // safe defaults. Schema bump to v4 (FORK_SCHEMA_VERSION) drops pre-bump
+    // state files via the gate at lib/state/persistence.ts:303-316.
+    // ponytail: depends on OpenCode preserving `time.created` on UI forks
+    // (verified via SQLite probe 2026-08-08). If OpenCode ever regenerates
+    // timestamps, the predicate at lib/state/inherit.ts filterInheritableBlocks
+    // degrades gracefully to "no inheritance" (timestamp set miss).
+    startTime: number
+    endTime: number
+    effectiveTimeMs: number[]
+    directTimeMs: number[]
+    anchorTime: number
+    compressTime: number
 }
 
 export interface PruneMessagesState {
@@ -159,6 +172,14 @@ export interface SessionState {
         lastPrefixHash: string | null
         lastFireAt: number | null
     }
+    // Cached at session transition (lib/state/state.ts ensureSessionInitialized
+    // or lib/hooks.ts createChatMessageTransformHandler). NOT persisted — it is
+    // rebuilt on every process start via SDK call. Used by the fork hint and
+    // the inheritance logic (BUG-089 plan §4.1).
+    sessionTitle?: string
+    // Set when fork inheritance copies blocks from a parent session.
+    // NOT persisted. Cleared on session reset (lib/state/state.ts resetSessionState).
+    inheritedFrom?: string | null
 }
 
 /** Persisted-state schema version for the local-only fork.
@@ -168,8 +189,15 @@ export interface SessionState {
  *      PersistedSessionState — it is rebuildable from the subagent session),
  *      so the bump is purely defensive: any v2 file on disk could carry state
  *      whose runtime invariants are now slightly different. Older state files
- *      are dropped on load (logged, not migrated). */
-export const FORK_SCHEMA_VERSION = 3
+ *      are dropped on load (logged, not migrated).
+ *  v4 (BUG-089): CompressionBlock gains 6 timestamp fields (startTime,
+ *      endTime, effectiveTimeMs, directTimeMs, anchorTime, compressTime).
+ *      SessionState gains sessionTitle (in-memory) and inheritedFrom (in-memory).
+ *      PersistedSessionState gains recoveryForced, nonCompactingRunCount,
+ *      recoveryFadeCounter (so fork inheritance can copy them per §4.5).
+ *      Pre-v4 files are DROPPED by the schema gate at lib/state/persistence.ts:303-316
+ *      (per DPP-004 / PAT-008 "drop, don't migrate"). Honest data loss on upgrade. */
+export const FORK_SCHEMA_VERSION = 4
 
 /** Cached result for a single subagent tool call (issue #595).
  *  Keyed by `${subAgentSessionId}::${callID}`. Written with the older-wins

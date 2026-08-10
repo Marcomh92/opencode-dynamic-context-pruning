@@ -37,13 +37,7 @@ import {
 } from "./commands"
 import { resolveEffectiveCompressPermission, type HostPermissionSnapshot } from "./host-permissions"
 import { compressPermission, syncCompressPermissionState } from "./compress-permission"
-import {
-    checkSession,
-    detectParentSessionFromTitle,
-    ensureSessionInitialized,
-    saveSessionState,
-    syncToolCache,
-} from "./state"
+import { checkSession, ensureSessionInitialized, saveSessionState, syncToolCache } from "./state"
 import { cacheSystemPromptTokens } from "./ui/utils"
 import { buildDiagnosticEvent } from "./diagnostic"
 
@@ -159,24 +153,6 @@ export function createSystemPromptHandler(
             !!state.manualMode,
             state.isSubAgent && config.experimental.allowSubAgents,
         )
-        // BUG-087: append a fork-inheritance hint when the active session was
-        // detected as a UI fork. The hint piggybacks on the system prompt so
-        // the model itself can choose not to re-compress content it has not
-        // seen in raw form in this session. The cached `sessionTitle` is
-        // populated by createChatMessageTransformHandler on first fire for a
-        // new session; before that fires, the title is undefined and the
-        // helper returns isForked:false (graceful).
-        if (state.sessionId !== null) {
-            const forkInfo = detectParentSessionFromTitle(
-                (state as { sessionTitle?: string }).sessionTitle,
-            )
-            if (forkInfo.isForked) {
-                newPrompt +=
-                    "\n\n---\n\n" +
-                    "Note: this session was forked from another session whose prior compression blocks are not visible here. " +
-                    "Avoid re-compressing content you have not seen in raw form in this session."
-            }
-        }
         if (output.system.length > 0) {
             output.system[output.system.length - 1] += "\n\n" + newPrompt
         } else {
@@ -218,48 +194,10 @@ export function createChatMessageTransformHandler(
             logger,
             output.messages,
             config.manualMode.enabled,
+            config,
             config.compress.stateMaxAgeDays,
             config.experimental.allowSubAgents,
         )
-
-        // BUG-087: detect UI-forked sessions via the OpenCode title pattern
-        // and emit a one-shot UX warning. Fires on session transition
-        // (process start, A→B, etc.) — never on per-fire within the same
-        // session. The title is cached on state for the system-prompt hint
-        // (createSystemPromptHandler) to read on subsequent fires.
-        //
-        // ponytail: composition vulnerability — B's `nonCompactingRunCount`,
-        // `prevAnchorEnd`, and `recoveryForced` all reset simultaneously
-        // when `ensureSessionInitialized` runs (the three independent
-        // safety mechanisms reset at once). The fix is UX-only; reordering
-        // the net-compaction gate is rejected per ADR 002. The title fetch
-        // duplicates `isSubAgentSession`'s SDK roundtrip; one extra bounded
-        // call per session transition is below the noise floor.
-        const lastSeenSessionId = (state as { lastSeenSessionId?: string }).lastSeenSessionId
-        if (state.sessionId !== null && state.sessionId !== lastSeenSessionId) {
-            let sessionTitle: string | undefined
-            try {
-                const result = await client.session.get({
-                    path: { id: state.sessionId },
-                    signal: AbortSignal.timeout(2000),
-                })
-                if (typeof result.data?.title === "string") {
-                    sessionTitle = result.data.title
-                }
-            } catch {
-                // Unreachable host / timeout / malformed response —
-                // graceful skip; helper returns isForked:false on undefined.
-            }
-            ;(state as { sessionTitle?: string }).sessionTitle = sessionTitle
-            const forkInfo = detectParentSessionFromTitle(sessionTitle)
-            if (forkInfo.isForked) {
-                logger.info(
-                    "DCP: forked session detected — prior compression blocks from parent session are not inherited. Consider reviewing context size before re-compressing shared history.",
-                    { sessionTitle, forkNumber: forkInfo.forkNumber },
-                )
-            }
-            ;(state as { lastSeenSessionId?: string }).lastSeenSessionId = state.sessionId
-        }
 
         syncCompressPermissionState(state, config, hostPermissions, output.messages)
 
@@ -385,6 +323,7 @@ export function createCommandExecuteHandler(
                 logger,
                 messages,
                 config.manualMode.enabled,
+                config,
                 config.compress.stateMaxAgeDays,
                 config.experimental.allowSubAgents,
             )

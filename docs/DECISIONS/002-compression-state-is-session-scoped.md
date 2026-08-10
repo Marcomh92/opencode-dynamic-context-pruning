@@ -1,6 +1,6 @@
 # ADR 002: Compression state is session-scoped by design
 
-**Status:** Accepted
+**Status:** Superseded in part by ADR-003 (2026-08-08).
 **Date:** 2026-08-07
 
 ## Context
@@ -51,10 +51,21 @@ The codebase uses `forkSchemaVersion` for THIS plugin's fork from upstream DCP. 
 - OpenCode session forks use the vocabulary "session lineage" / "parent session" in identifiers.
 - A glossary entry in `docs/MASTER.md` disambiguates the two concepts.
 
+## Superseded sections
+
+ADR-003 (2026-08-08) overrides the following in this ADR:
+
+- **Path B rejection (lines 30-36)** — Cross-session state inheritance is now ACCEPTED, gated on `experimental.inheritOnFork` (default true). Implementation: timestamp-anchored predicate + always-pick fallback chain + schema bump to v4. See `docs/DECISIONS/003-fork-state-inheritance.md`.
+- **"Per-session isolation as load-bearing invariant" claim** — Per-session FILE boundary is preserved (`{sessionId}.json` namespacing unchanged); inheritance copies selected fields via the third sanctioned writer `mergeInheritedBlocks` in `lib/compress/state.ts`. The "isolation" claim is relaxed: state crosses session boundaries on the fork path; per-session file isolation is still load-bearing for non-fork sessions.
+
+The rest of ADR-002 holds: detection helper (`detectParentSessionFromTitle`), the load-bearing per-session file isolation for normal sessions, the recovery protocol as general-case mitigation. The system-prompt hint and UX warning mentioned in this ADR were removed in ADR-003; `tests/session-fork.test.ts` was rewritten for always-pick semantics.
+
 ## Related
 
-- `known_issues/BUG-087-forked-session-context-bloat.md` — the bug this ADR responds to
-- `lib/compress/pipeline.ts:157-208` — the recovery protocol (general-case mitigation)
-- `lib/state/persistence.ts:78-80` — per-session state isolation (load-bearing invariant)
-- `lib/state/utils.ts:54-65` — `isSubAgentSession` (the only existing fork-detection, limited to task-spawned subagents)
-- `tests/session-fork.test.ts` — characterization tests for the fork detection, UX warning, and system-prompt hint
+- `docs/DECISIONS/003-fork-state-inheritance.md` — supersedes the Path B rejection.
+- `docs/features/SESSION_FORK.md` — user-facing behavior of fork inheritance.
+- `known_issues/fixed/BUG-089-fork-state-inheritance-protocol-layer.md` — the bug ADR-003 closes.
+- `lib/compress/pipeline.ts:157-208` — the recovery protocol (general-case mitigation).
+- `lib/state/persistence.ts:78-80` — per-session state isolation (load-bearing invariant).
+- `lib/state/utils.ts:54-65` — `isSubAgentSession` (the only existing fork-detection, limited to task-spawned subagents).
+- `tests/session-fork.test.ts` and `tests/session-fork-inherit.test.ts` — characterization tests for the fork detection and inheritance orchestrator.

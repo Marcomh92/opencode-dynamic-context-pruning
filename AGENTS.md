@@ -8,7 +8,7 @@ For system architecture, patterns, and technical details, see the documentation 
 
 OpenCode plugin: `@tarquinen/opencode-dcp` — Dynamic Context Pruning. Replaces obsolete tool outputs in conversation context with high-fidelity summaries before LLM calls. Session history on disk is never mutated; pruning is an in-flight transform.
 
-Fork note: this fork adds a v2 fork-protocol layer on top of upstream DCP (see `compress.maxCompactionRatio`, `compress.maxContextLimitRecovery`, `compress.recoveryFadeWindow`, `compress.forkSchemaVersion`, `compress.stateMaxAgeDays` in `lib/config.ts`).
+Fork note: this fork adds a v2 fork-protocol layer on top of upstream DCP (see `compress.maxCompactionRatio`, `compress.maxContextLimitRecovery`, `compress.recoveryFadeWindow`, `compress.forkSchemaVersion`, `compress.stateMaxAgeDays` in `lib/config.ts`). At `compress.forkSchemaVersion >= 4`, BUG-031 ("session-local reset" of recovery fields) is fully superseded: `recoveryForced`, `nonCompactingRunCount`, `recoveryFadeCounter` round-trip on every `saveSessionState`/`loadSessionState` (`lib/state/persistence.ts:142-144`, `lib/state/state.ts:281-301`). History: `known_issues/fixed/BUG-031-recoveryforced-persists-cross-run.md`.
 
 ## MANDATORY: PREFLIGHT CHECKLIST
 

@@ -17,8 +17,14 @@ mkdirSync(testConfigHome, { recursive: true })
 
 const storageDir = join(testDataHome, "opencode", "storage", "plugin", "dcp")
 
-test("BUG-031: recoveryForced and streak counters are session-local, not persisted", async () => {
-    const sessionId = `ses_recovery_not_persisted_${Date.now()}_${Math.random()}`
+test("BUG-031 superseded by BUG-089: recoveryForced and streak counters ARE persisted (v4)", async () => {
+    // BUG-031 originally established that recoveryForced + nonCompactingRunCount
+    // were session-local and never persisted. BUG-089 (fork-state-inheritance
+    // plan §4.5) inverts that rule at v4: the recovery fields are now
+    // persisted so a forked session (B) can inherit A's recovery state along
+    // with its blocks. Fork inheritance overrides the load-path reset
+    // (see lib/state/inherit.ts:tryInheritFromParent).
+    const sessionId = `ses_recovery_persisted_v4_${Date.now()}_${Math.random()}`
     const state = createSessionState()
     state.sessionId = sessionId
     state.manualMode = "active"
@@ -32,15 +38,16 @@ test("BUG-031: recoveryForced and streak counters are session-local, not persist
         readFileSync(join(storageDir, `${sessionId}.json`), "utf8"),
     ) as Record<string, unknown>
 
-    for (const field of ["recoveryForced", "nonCompactingRunCount", "recoveryFadeCounter"]) {
-        assert.ok(
-            !(field in persisted) || persisted[field] == null,
-            `${field} must not cross the v1→v2 persistence boundary`,
-        )
-    }
+    // v4: these fields ARE persisted. The original BUG-031 "must not cross
+    // the persistence boundary" claim no longer holds; the new contract is
+    // "load-path resets them by default, but fork inheritance can copy them
+    // from the parent state via typeof === guards in tryInheritFromParent".
+    assert.equal(persisted.recoveryForced, true, "recoveryForced must persist at v4")
+    assert.equal(persisted.nonCompactingRunCount, 4, "nonCompactingRunCount must persist at v4")
+    assert.equal(persisted.recoveryFadeCounter, 2, "recoveryFadeCounter must persist at v4")
 })
 
-// Logic Verified: recovery protocol state and streak counters do not cross the persistence boundary.
-// Bugs Documented: BUG-031-recoveryforced-persists-cross-run.md.
+// Logic Verified: recoveryForced / nonCompactingRunCount / recoveryFadeCounter persist at v4 (BUG-031 superseded by BUG-089).
+// Bugs Documented: BUG-031-recoveryforced-persists-cross-run.md (superseded by BUG-089), BUG-089 (fork-state-inheritance protocol layer).
 // Fakes Updated: isolated XDG data/config directories only.
-// Review Status: pending implementer round.
+// Review Status: pending independent review.
