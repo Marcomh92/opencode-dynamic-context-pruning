@@ -7,12 +7,10 @@
 ## Problem
 
 scripts/verify-package.mjs is the pre-publish verifier (
-pm run check:package). On a clean checkout of HEAD 92daaf1, running 
+pm run check:package). On a clean checkout of HEAD 92daaf1, running
 ode scripts/verify-package.mjs fails with:
 
-`
-package verification failed: lib\config.ts uses named import from CommonJS-style package jsonc-parser
-`
+`package verification failed: lib\config.ts uses named import from CommonJS-style package jsonc-parser`
 
 The script's carve-out at line 193 only skips the deep ESM path:
 
@@ -28,7 +26,7 @@ But lib/config.ts:13 imports the **bare** specifier:
 import { parse } from "jsonc-parser"
 `
 
-The bare specifier resolves via 
+The bare specifier resolves via
 ode_modules/jsonc-parser/package.json's "main": "./lib/umd/main.js" (the CJS UMD path). The carve-out checks the wrong path, so the legitimate import — the one PAT-014 and the file-header comment at lib/config.ts:4-12 explicitly require — fails the gate.
 
 ## Root cause
@@ -69,8 +67,7 @@ The bare specifier resolves to lib/umd/main.js (CJS UMD), which is exactly the p
 
 ## Impact
 
-- 
-pm run check:package (build + verify-package) fails before any publish.
+- pm run check:package (build + verify-package) fails before any publish.
 - The plugin otherwise functions correctly — the import is legitimate, the carve-out is just incorrectly scoped.
 - CI does not currently invoke erify-package.mjs, so the failure is invisible at PR time.
 
@@ -82,5 +79,5 @@ pm run check:package (build + verify-package) fails before any publish.
 
 ## Severity rationale
 
-Medium: blocks 
+Medium: blocks
 pm run check:package (pre-publish), but does not affect runtime, dev loop, or test suite. CI is unaffected. Easy one-line fix once prioritized.
