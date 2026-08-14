@@ -4,21 +4,22 @@ The transform hook's pipeline that replaces obsolete tool outputs with synthetic
 
 ## Pipeline order
 
-`experimental.chat.messages.transform` runs in this exact order (`lib/hooks.ts:177-203`):
+`experimental.chat.messages.transform` runs in this exact order (`lib/hooks.ts:248-281`):
 
 1. `stripHallucinations`
-2. `cacheSystemPromptTokens`
-3. `assignMessageRefs`
-4. `syncCompressionBlocks`
-5. `syncToolCache`
-6. `buildToolIdList`
-7. `prune`
-8. `injectExtendedSubAgentResults`
-9. `buildPriorityMap`
-10. `injectCompressNudges`
-11. `injectMessageIds`
-12. `applyPendingManualTrigger`
-13. `stripStaleMetadata`
+2. `stripPatterns` (config-driven; see INV-P7 note below)
+3. `cacheSystemPromptTokens`
+4. `assignMessageRefs`
+5. `syncCompressionBlocks`
+6. `syncToolCache`
+7. `buildToolIdList`
+8. `prune`
+9. `injectExtendedSubAgentResults`
+10. `buildPriorityMap`
+11. `injectCompressNudges`
+12. `injectMessageIds`
+13. `applyPendingManualTrigger`
+14. `stripStaleMetadata`
 
 Strategies (`deduplicate`, `purgeErrors`) run only inside the `compress` tool pipeline (`lib/compress/pipeline.ts:94-95`), not in the transform hook.
 
@@ -56,6 +57,8 @@ Replacement strings are module-locals at `lib/messages/prune.ts:9-12`.
 | INV-P12 | Range-mode nudges skip empty / pending-only assistants.                                                                                                                                         | `lib/messages/inject/utils.ts:228-247`                                    |
 | INV-P13 | Priority map dedup key is `ref`, not `rawMessageId`.                                                                                                                                            | `lib/messages/priority.ts:82-99`                                          |
 
+`stripPatterns` (pipeline step 2) is **not** a skip gate — it runs after the skip gates have already accepted the message and mutates `part.text` / completed `state.output` in place. It complements the BUG-094 protect-gate fix: the flag-level fix removes a synthetic message from the protected-text section, while `stripPatterns` removes a synthetic block from the LLM-bound context entirely (so it cannot reach a compression summary via any path). See `docs/CONFIGURATION.md` "Strip patterns" for the block-name / literal-substring semantics.
+
 ## Boundaries
 
 | Boundary                                     | Behavior                                                                                                      |
@@ -85,25 +88,26 @@ Replacement strings are module-locals at `lib/messages/prune.ts:9-12`.
 
 ## Conventions
 
-- In-place mutation is the norm for `messages` arrays. `prune`, `filterMessagesInPlace`, `stripHallucinations`, and `stripStaleMetadata` all mutate length. Callers must accept array identity change.
+- In-place mutation is the norm for `messages` arrays. `prune`, `filterMessagesInPlace`, `stripHallucinations`, and `stripStaleMetadata` all mutate length. `stripPatterns` mutates `part.text` / `state.output` fields without changing array length. Callers must accept array identity change.
 - `part.state.output` is mutated directly by `pruneToolOutputs` and `injectExtendedSubAgentResults`, never both on the same part: the latter `continue`s if `state.prune.tools.has(callID)`.
 - The `protectedTools` default is `[]` in the v2 fork. Feature owners must opt in. See `DPP-007`.
 - Ponytail markers: `lib/messages/inject/subagent-results.ts:20-22` documents the removed fetch as a deliberate simplification; `lib/messages/utils.ts:33-47` documents the `time.created = 0` sentinel with its caveat.
 
 ## Test coverage
 
-| Concern                                                                                                 | Test file                                        |
-| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| Synthetic-message byte-stability, `time.created === 0` sentinel                                         | `tests/synthetic-user-message-stability.test.ts` |
-| Append idempotency (exact tail vs non-tail re-append)                                                   | `tests/append-idempotency.test.ts`               |
-| Message priority / ID injection / range+message mode nudge placement (incl. issue #463 empty-assistant) | `tests/message-priority.test.ts`                 |
-| `isIgnoredUserMessage` semantics                                                                        | `tests/message-utils.test.ts`                    |
-| Block-ID `BLOCKED` rewrite under message mode                                                           | `tests/message-priority.test.ts`                 |
-| Hallucination stripping regex coverage                                                                  | `tests/message-priority.test.ts`                 |
-| Compress block → `prune.tools` propagation                                                              | `tests/prune-tools-propagation.test.ts`          |
-| Decompress → prune.tools cleanup regression                                                             | `tests/decompress-prune-tools-cleanup.test.ts`   |
-| Subagent cache injection (no fetch)                                                                     | `tests/subagent-cache.test.ts`                   |
-| Synthetic compress burn                                                                                 | `tests/synthetic-compress-burn.test.ts`          |
-| Protected patterns (tool name globs, file path globs, multiedit/apply_patch)                            | `tests/protected-patterns.test.ts`               |
+| Concern                                                                                                        | Test file                                        |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Synthetic-message byte-stability, `time.created === 0` sentinel                                                | `tests/synthetic-user-message-stability.test.ts` |
+| Append idempotency (exact tail vs non-tail re-append)                                                          | `tests/append-idempotency.test.ts`               |
+| Message priority / ID injection / range+message mode nudge placement (incl. issue #463 empty-assistant)        | `tests/message-priority.test.ts`                 |
+| `isIgnoredUserMessage` semantics                                                                               | `tests/message-utils.test.ts`                    |
+| Block-ID `BLOCKED` rewrite under message mode                                                                  | `tests/message-priority.test.ts`                 |
+| Hallucination stripping regex coverage                                                                         | `tests/message-priority.test.ts`                 |
+| `stripPatterns` block-name + literal-substring modes, idempotency, skip semantics for pending/non-string parts | `tests/strip-patterns.test.ts`                   |
+| Compress block → `prune.tools` propagation                                                                     | `tests/prune-tools-propagation.test.ts`          |
+| Decompress → prune.tools cleanup regression                                                                    | `tests/decompress-prune-tools-cleanup.test.ts`   |
+| Subagent cache injection (no fetch)                                                                            | `tests/subagent-cache.test.ts`                   |
+| Synthetic compress burn                                                                                        | `tests/synthetic-compress-burn.test.ts`          |
+| Protected patterns (tool name globs, file path globs, multiedit/apply_patch)                                   | `tests/protected-patterns.test.ts`               |
 
 `lib/strategies/deduplication.ts` and `lib/strategies/purge-errors.ts` are only covered indirectly. See `docs/TESTING.md` "Coverage gaps".

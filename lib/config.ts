@@ -36,6 +36,7 @@ export interface CompressConfig {
     protectedTools: string[]
     protectTags: boolean
     protectUserMessages: boolean
+    stripPatterns: string[]
     // v2 fork protocol (issue #573 + #590, PLAN §6.1-§6.3).
     maxCompactionRatio: number
     maxContextLimitRecovery: number
@@ -147,6 +148,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "compress.protectedTools",
     "compress.protectTags",
     "compress.protectUserMessages",
+    "compress.stripPatterns",
     "compress.maxCompactionRatio",
     "compress.maxContextLimitRecovery",
     "compress.recoveryFadeWindow",
@@ -514,6 +516,38 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     key: "compress.protectUserMessages",
                     expected: "boolean",
                     actual: typeof compress.protectUserMessages,
+                })
+            }
+
+            if (compress.stripPatterns !== undefined && !Array.isArray(compress.stripPatterns)) {
+                errors.push({
+                    key: "compress.stripPatterns",
+                    expected: "string[]",
+                    actual: typeof compress.stripPatterns,
+                })
+            } else if (
+                Array.isArray(compress.stripPatterns) &&
+                !compress.stripPatterns.every((v: unknown) => typeof v === "string")
+            ) {
+                errors.push({
+                    key: "compress.stripPatterns",
+                    expected: "string[]",
+                    actual: "non-string entries",
+                })
+            } else if (
+                Array.isArray(compress.stripPatterns) &&
+                compress.stripPatterns.length > 32
+            ) {
+                // ponytail: hard cap at 32. Per-fire cost is O(messages × parts
+                // × patterns × text_length). At 32 patterns × typical 100 msgs
+                // × 10 parts × 2k chars = ~6×10^7 char comparisons = <100ms.
+                // A 10000-entry config would freeze every LLM call (~20s/fire).
+                // Raise when a real workload exceeds 32 — no user-facing API
+                // should need more than a handful of synthetic-block patterns.
+                errors.push({
+                    key: "compress.stripPatterns",
+                    expected: "string[] (length <= 32)",
+                    actual: `length ${compress.stripPatterns.length}`,
                 })
             }
 
@@ -904,6 +938,7 @@ const defaultConfig: PluginConfig = {
         protectedTools: [...COMPRESS_DEFAULT_PROTECTED_TOOLS],
         protectTags: false,
         protectUserMessages: false,
+        stripPatterns: [],
         maxCompactionRatio: 0.7,
         maxContextLimitRecovery: 3,
         recoveryFadeWindow: 5,
@@ -1078,6 +1113,10 @@ function mergeCompress(
         protectedTools: override.protectedTools ?? base.protectedTools,
         protectTags: override.protectTags ?? base.protectTags,
         protectUserMessages: override.protectUserMessages ?? base.protectUserMessages,
+        // ponytail: replace-semantics per user override (same as protectedTools).
+        // The user's dcp.jsonc is the single source of truth — `stripPatterns: []`
+        // must mean "strip nothing", not "merge with a hardcoded default".
+        stripPatterns: override.stripPatterns ?? base.stripPatterns,
         // v2 fork protocol
         maxCompactionRatio: clampRatio(override.maxCompactionRatio ?? base.maxCompactionRatio),
         maxContextLimitRecovery: clampMin1(
@@ -1193,6 +1232,7 @@ function deepCloneConfig(config: PluginConfig): PluginConfig {
             modelMaxLimits: { ...config.compress.modelMaxLimits },
             modelMinLimits: { ...config.compress.modelMinLimits },
             protectedTools: [...config.compress.protectedTools],
+            stripPatterns: [...config.compress.stripPatterns],
         },
         strategies: {
             deduplication: {

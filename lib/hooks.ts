@@ -12,6 +12,7 @@ import {
     prune,
     stripHallucinations,
     stripHallucinationsFromString,
+    stripPatterns,
     stripStaleMetadata,
     syncCompressionBlocks,
 } from "./messages"
@@ -246,6 +247,11 @@ export function createChatMessageTransformHandler(
         // un-transformed messages instead of breaking the LLM call.
         try {
             stripHallucinations(output.messages)
+            // stripPatterns runs after stripHallucinations so a synthetic-block
+            // pattern that overlaps a hallucinated tag is still cleaned. Empty
+            // pattern arrays short-circuit (no compile, no scan). Costs only the
+            // per-part text-field walk when the user has at least one entry.
+            stripPatterns(output.messages, config.compress.stripPatterns)
             cacheSystemPromptTokens(state, output.messages)
             assignMessageRefs(state, output.messages)
             syncCompressionBlocks(state, logger, output.messages)

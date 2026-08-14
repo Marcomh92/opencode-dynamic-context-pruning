@@ -28,7 +28,7 @@ Format: a short statement of the ceiling, then a one-line "Add when ..." clause.
 
 ## PAT-003 — In-place mutation for message arrays
 
-`prune`, `filterMessagesInPlace`, `stripHallucinations`, and `stripStaleMetadata` mutate the input array's length in place. Callers must accept array identity change.
+`prune`, `filterMessagesInPlace`, `stripHallucinations`, and `stripStaleMetadata` mutate the input array's length in place. `stripPatterns` mutates `part.text` / `state.output` fields without changing array length. Callers must accept array identity change.
 
 **Why.** A new array would mean a new identity, and downstream code keys off identity. In-place is the contract.
 

@@ -17,11 +17,12 @@ The plugin reads JSONC config from up to four sources and merges them in this or
 
 ## Replace vs additive semantics
 
-| Key                                      | Semantics                                                                                       | Rationale                                                            |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `compress.protectedTools`                | Replace per layer. `[]` means nothing protected.                                                | An explicit `[]` is the user's choice; default-merge would surprise. |
-| `compress.protectedFilePatterns`         | Additive per layer.                                                                             | Pattern lists compose naturally; an empty list is harmless.          |
-| Other arrays (e.g. `commands.something`) | See `mergeCompress` / `mergeStrategies` / `mergeCommands` ponytail comments in `lib/config.ts`. | Per-key; the comments are the spec.                                  |
+| Key                                      | Semantics                                                                                       | Rationale                                                             |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `compress.protectedTools`                | Replace per layer. `[]` means nothing protected.                                                | An explicit `[]` is the user's choice; default-merge would surprise.  |
+| `compress.stripPatterns`                 | Replace per layer. `[]` means strip nothing.                                                    | Same rule as `protectedTools`: an explicit `[]` is the user's choice. |
+| `compress.protectedFilePatterns`         | Additive per layer.                                                                             | Pattern lists compose naturally; an empty list is harmless.           |
+| Other arrays (e.g. `commands.something`) | See `mergeCompress` / `mergeStrategies` / `mergeCommands` ponytail comments in `lib/config.ts`. | Per-key; the comments are the spec.                                   |
 
 The replace rule is the v2 fork's hard rule (`DPP-007`).
 
@@ -31,6 +32,17 @@ The replace rule is the v2 fork's hard rule (`DPP-007`).
 
 Note: on case-insensitive filesystems (Windows, default macOS HFS+/APFS), the _file system_ folds case, but the matcher does not. A pattern like `README.md` matches the literal string `README.md`, not `readme.md`.
 
+## Strip patterns (block-name vs literal substring)
+
+`compress.stripPatterns` (`lib/messages/strip-patterns.ts`) is evaluated by `compileStripPattern`, with two modes per entry:
+
+| Entry shape           | Meaning                                                                                                                | Use                                                                                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<name>` (single tag) | Matches the entire `<name>...</name>` block including content (lazy match). Regex special chars in `name` are escaped. | Strip synthetic blocks injected by third-party plugins (e.g. `<available-skills>` from `opencode-agent-delegation` / `opencode-agent-skills`). |
+| Any other string      | Literal substring match. All regex special chars are escaped.                                                          | Strip arbitrary markers (e.g. `[TODO]`, `End of section`).                                                                                     |
+
+The strip runs at the transform-pipeline level (step 2 in `lib/hooks.ts:248-254`, right after `stripHallucinations`) and applies to every outbound LLM call — not just compress. Entries are hard-capped at 32 by `validateConfigTypes`; see the `lib/config.ts:541-546` ponytail for the per-fire cost rationale.
+
 ## Validation
 
 - Unknown keys and type errors trigger a delayed toast. The layer is still merged.
@@ -39,14 +51,15 @@ Note: on case-insensitive filesystems (Windows, default macOS HFS+/APFS), the _f
 
 ## Runtime defaults
 
-| Key                           | Default           | Source                           |
-| ----------------------------- | ----------------- | -------------------------------- |
-| `compress.mode`               | `range`           | `lib/config.ts` runtime defaults |
-| `compress.permission`         | `allow`           | `lib/config.ts` runtime defaults |
-| `compress.protectedTools`     | `[]`              | v2 fork; no default              |
-| `autoUpdate`                  | `false`           | `lib/config.ts` runtime defaults |
-| `compress.stateMaxAgeDays`    | `null` (disabled) | `lib/config.ts`                  |
-| `compress.stateRetentionDays` | `7`               | `lib/config.ts`                  |
+| Key                           | Default           | Source                                             |
+| ----------------------------- | ----------------- | -------------------------------------------------- |
+| `compress.mode`               | `range`           | `lib/config.ts` runtime defaults                   |
+| `compress.permission`         | `allow`           | `lib/config.ts` runtime defaults                   |
+| `compress.protectedTools`     | `[]`              | v2 fork; no default                                |
+| `compress.stripPatterns`      | `[]`              | `lib/config.ts:941`; no behavior change on default |
+| `autoUpdate`                  | `false`           | `lib/config.ts` runtime defaults                   |
+| `compress.stateMaxAgeDays`    | `null` (disabled) | `lib/config.ts`                                    |
+| `compress.stateRetentionDays` | `7`               | `lib/config.ts`                                    |
 
 `compress.stateRetentionDays` is the wall-clock retention for files in the DCP storage dir. Days before state files are excluded from the fork candidate scan (mtime pre-filter, `lib/state/inherit.ts:365-398`) and deleted by the sweep on save (`lib/state/persistence.ts:101-155`). Default `7`. Values below 1 (including `0`, negative, and fractional) collapse to `null` (disabled) via `clampStateRetentionDays` (`lib/config.ts:1130-1135`) — the helper enforces this so a user typo of `-1` or `0` falls back to disabled instead of silently deleting every state file. Distinct from `compress.stateMaxAgeDays` (load gate, also disabled at `null`); `stateRetentionDays` is the sweep + scan threshold (file deletion); `stateMaxAgeDays` is the load-time rejection threshold (no file deletion). BUG-092.
 

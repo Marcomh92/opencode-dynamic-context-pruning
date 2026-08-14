@@ -253,6 +253,15 @@
                     "default": false,
                     "description": "When enabled, your messages are never lost during compression"
                 },
+                "stripPatterns": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "maxItems": 32,
+                    "description": "Text patterns stripped from message parts before they reach the LLM. Each entry is interpreted as follows: an angle-bracketed tag like `<available-skills>` matches the entire `<available-skills>...</available-skills>` block (lazy match, including content); any other string is matched as a literal substring. Useful for removing synthetic injections from third-party plugins (e.g. `opencode-agent-delegation`, `opencode-agent-skills`) so they never reach the LLM context — and therefore never appear in compression summaries. Hard-capped at 32 entries (per-fire cost is O(messages × parts × patterns × text_length); larger lists would freeze every LLM call). Empty array = no behavior change."
+                },
                 "maxCompactionRatio": {
                     "type": "number",
                     "default": 0.7,
@@ -301,6 +310,7 @@
                 "protectedTools": [],
                 "protectTags": false,
                 "protectUserMessages": false,
+                "stripPatterns": [],
                 "maxCompactionRatio": 0.7,
                 "maxContextLimitRecovery": 3,
                 "recoveryFadeWindow": 5,

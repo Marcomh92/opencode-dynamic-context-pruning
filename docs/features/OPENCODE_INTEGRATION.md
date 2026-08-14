@@ -55,6 +55,15 @@ With `experimental.allowSubAgents = false`, `compress` is added to OpenCode's `e
 
 Subagent detection is one SDK call in `ensureSessionInitialized`; the result is cached on `state.isSubAgent`. Errors fall through to `false` (treats unreachable subagent lookup as primary session).
 
+## Third-party plugin output
+
+Third-party plugins (e.g. `opencode-agent-delegation`, `opencode-agent-skills`) can inject synthetic user-message bodies containing tag-shaped blocks like `<available-skills>...</available-skills>`. Two layers of protection apply:
+
+- **Flag-level exclusion (BUG-094).** `isIgnoredUserMessage` recognises `part.synthetic: true` as a skip signal, so synthetic-flagged messages are excluded from `isProtectedUserMessage` and do not appear verbatim in compression summaries under `compress.protectUserMessages: true`.
+- **Content-level strip (`compress.stripPatterns`).** A user-listed tag pattern (e.g. `<available-skills>`) is removed from `part.text` / completed `state.output` at pipeline step 2, before the LLM call. This guarantees the synthetic block never reaches the model context — and therefore cannot reach a compression summary via any other path (range mode, message mode, or unprotected mode).
+
+The two layers are independent and complementary. The flag-level fix is the safe default; the content-level strip is the explicit user opt-in. See `docs/features/PRUNING.md` INV-P7 and `docs/CONFIGURATION.md` "Strip patterns".
+
 ## TUI entrypoint
 
 `tui.tsx` is a separate entrypoint that ships with the package. The TUI:
