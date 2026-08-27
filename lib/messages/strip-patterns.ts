@@ -30,13 +30,30 @@ export const compileStripPattern = (pattern: string): RegExp => {
     return new RegExp(escapeRegex(pattern), "g")
 }
 
-/** Strip matching text patterns from message parts (text parts + completed
- *  tool outputs). Runs early in the transform pipeline so the strips affect
- *  every outbound LLM call, not just compression. Idempotent — re-running on
- *  already-stripped text is a no-op.
- *
- *  Each entry in `patterns` is interpreted by `compileStripPattern`: `<name>`
- *  becomes a whole-block match; any other string becomes a literal substring. */
+/** Strip matching text patterns from a single string. Each entry in `patterns`
+ *  is interpreted by `compileStripPattern`: `<name>` becomes a whole-block
+ *  match; any other string becomes a literal substring. Returns the input
+ *  unchanged when `patterns` is empty. Idempotent — re-running on already-
+ *  stripped text is a no-op. Compile-once-strip-many: caller pays the regex
+ *  compile cost once per call regardless of how many patterns are listed. */
+export function stripText(text: string, patterns: readonly string[]): string {
+    if (!patterns || patterns.length === 0) return text
+    // ponytail: pre-compile once per fire; reuse the regex across all parts.
+    // Avoids per-part recompile on hot path (every LLM fetch).
+    const compiled = patterns.map(compileStripPattern)
+    let next = text
+    for (const re of compiled) {
+        next = next.replace(re, "")
+    }
+    return next
+}
+
+// ponytail: dead at runtime since the BUG-095 fix moved stripPatterns out of
+// the transform pipeline (see `known_issues/BUG-095-strippatterns-llm-context-
+// strip.md`). The 14 tests in `tests/strip-patterns.test.ts` still pin
+// `compileStripPattern`'s regex shape and serve as the contract for `stripText`.
+// Delete this function and its tests only when `stripText` also has direct
+// regex-shape coverage.
 export function stripPatterns(
     messages: WithParts[],
     patterns: readonly string[] | undefined,

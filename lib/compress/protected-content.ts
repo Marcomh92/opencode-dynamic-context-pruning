@@ -1,5 +1,6 @@
 import type { SessionState } from "../state"
 import { isIgnoredUserMessage } from "../messages/query"
+import { stripText } from "../messages/strip-patterns"
 import {
     getFilePathsFromParameters,
     isFilePathProtected,
@@ -15,6 +16,7 @@ export function appendProtectedUserMessages(
     searchContext: SearchContext,
     state: SessionState,
     enabled: boolean,
+    stripPatterns: readonly string[] = [],
 ): string {
     if (!enabled) return summary
 
@@ -34,7 +36,7 @@ export function appendProtectedUserMessages(
         const parts = Array.isArray(message.parts) ? message.parts : []
         for (const part of parts) {
             if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
-                userTexts.push(part.text)
+                userTexts.push(stripText(part.text, stripPatterns))
                 break
             }
         }
@@ -55,6 +57,7 @@ export function appendProtectedPromptInfo(
     searchContext: SearchContext,
     state: SessionState,
     enabled: boolean,
+    stripPatterns: readonly string[] = [],
 ): string {
     if (!enabled) return summary
 
@@ -75,7 +78,9 @@ export function appendProtectedPromptInfo(
         for (const part of parts) {
             if (part.type !== "text" || typeof part.text !== "string") continue
 
-            protectedTexts.push(...extractProtectedPromptInfo(part.text))
+            for (const protectedText of extractProtectedPromptInfo(part.text)) {
+                protectedTexts.push(stripText(protectedText, stripPatterns))
+            }
         }
     }
 

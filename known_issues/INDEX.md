@@ -6,9 +6,10 @@ This directory tracks known bugs, limitations, and design trade-offs in the `@ta
 
 ## Active Issues
 
-| ID      | Title                                                                                                              | Severity | Status |
-| ------- | ------------------------------------------------------------------------------------------------------------------ | -------- | ------ |
-| BUG-093 | `verify-package.mjs` carve-out at line 193 checks the wrong path for `jsonc-parser` (bare specifier, not deep ESM) | Medium   | Open   |
+| ID      | Title                                                                                                                                            | Severity | Status |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------- | ------ |
+| BUG-093 | `verify-package.mjs` carve-out at line 193 checks the wrong path for `jsonc-parser` (bare specifier, not deep ESM)                               | Medium   | Open   |
+| BUG-095 | `compress.stripPatterns` runs in the transform pipeline and strips synthetic blocks from the LLM-bound context, not just the compression summary | Medium   | Open   |
 
 ## Severity Legend
 

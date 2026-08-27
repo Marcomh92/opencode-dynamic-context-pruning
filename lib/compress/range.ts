@@ -137,6 +137,7 @@ export function createCompressRangeTool(ctx: ToolContext): ReturnType<typeof too
                     searchContext,
                     ctx.state,
                     ctx.config.compress.protectUserMessages,
+                    ctx.config.compress.stripPatterns,
                 )
 
                 const summaryWithPromptInfo = appendProtectedPromptInfo(
@@ -145,6 +146,7 @@ export function createCompressRangeTool(ctx: ToolContext): ReturnType<typeof too
                     searchContext,
                     ctx.state,
                     ctx.config.compress.protectTags,
+                    ctx.config.compress.stripPatterns,
                 )
 
                 const summaryWithTools = await appendProtectedTools(

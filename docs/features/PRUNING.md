@@ -4,22 +4,21 @@ The transform hook's pipeline that replaces obsolete tool outputs with synthetic
 
 ## Pipeline order
 
-`experimental.chat.messages.transform` runs in this exact order (`lib/hooks.ts:248-281`):
+`experimental.chat.messages.transform` runs in this exact order (`lib/hooks.ts:248-282`):
 
 1. `stripHallucinations`
-2. `stripPatterns` (config-driven; see INV-P7 note below)
-3. `cacheSystemPromptTokens`
-4. `assignMessageRefs`
-5. `syncCompressionBlocks`
-6. `syncToolCache`
-7. `buildToolIdList`
-8. `prune`
-9. `injectExtendedSubAgentResults`
-10. `buildPriorityMap`
-11. `injectCompressNudges`
-12. `injectMessageIds`
-13. `applyPendingManualTrigger`
-14. `stripStaleMetadata`
+2. `cacheSystemPromptTokens`
+3. `assignMessageRefs`
+4. `syncCompressionBlocks`
+5. `syncToolCache`
+6. `buildToolIdList`
+7. `prune`
+8. `injectExtendedSubAgentResults`
+9. `buildPriorityMap`
+10. `injectCompressNudges`
+11. `injectMessageIds`
+12. `applyPendingManualTrigger`
+13. `stripStaleMetadata`
 
 Strategies (`deduplicate`, `purgeErrors`) run only inside the `compress` tool pipeline (`lib/compress/pipeline.ts:94-95`), not in the transform hook.
 
@@ -57,7 +56,7 @@ Replacement strings are module-locals at `lib/messages/prune.ts:9-12`.
 | INV-P12 | Range-mode nudges skip empty / pending-only assistants.                                                                                                                                         | `lib/messages/inject/utils.ts:228-247`                                    |
 | INV-P13 | Priority map dedup key is `ref`, not `rawMessageId`.                                                                                                                                            | `lib/messages/priority.ts:82-99`                                          |
 
-`stripPatterns` (pipeline step 2) is **not** a skip gate — it runs after the skip gates have already accepted the message and mutates `part.text` / completed `state.output` in place. It complements the BUG-094 protect-gate fix: the flag-level fix removes a synthetic message from the protected-text section, while `stripPatterns` removes a synthetic block from the LLM-bound context entirely (so it cannot reach a compression summary via any path). See `docs/CONFIGURATION.md` "Strip patterns" for the block-name / literal-substring semantics.
+`stripText` (in `lib/messages/strip-patterns.ts`) is **not** a pipeline step and **not** a skip gate — it is called only from the two compression-summary builders (`appendProtectedUserMessages`, `appendProtectedPromptInfo` in `lib/compress/protected-content.ts`) and applies to the verbatim user-message dump of a compression summary. The agent keeps the synthetic block in its live context. It complements the BUG-094 protect-gate fix: the flag-level fix removes a fully-synthetic message from the protected-text section, while `stripText` sanitizes an inline synthetic-shaped block inside a non-synthetic user message so it cannot reach a compression summary via any path. See `docs/CONFIGURATION.md` "Strip patterns" for the block-name / literal-substring semantics.
 
 ## Boundaries
 
@@ -88,7 +87,7 @@ Replacement strings are module-locals at `lib/messages/prune.ts:9-12`.
 
 ## Conventions
 
-- In-place mutation is the norm for `messages` arrays. `prune`, `filterMessagesInPlace`, `stripHallucinations`, and `stripStaleMetadata` all mutate length. `stripPatterns` mutates `part.text` / `state.output` fields without changing array length. Callers must accept array identity change.
+- In-place mutation is the norm for `messages` arrays. `prune`, `filterMessagesInPlace`, `stripHallucinations`, and `stripStaleMetadata` all mutate length. Callers must accept array identity change.
 - `part.state.output` is mutated directly by `pruneToolOutputs` and `injectExtendedSubAgentResults`, never both on the same part: the latter `continue`s if `state.prune.tools.has(callID)`.
 - The `protectedTools` default is `[]` in the v2 fork. Feature owners must opt in. See `DPP-007`.
 - Ponytail markers: `lib/messages/inject/subagent-results.ts:20-22` documents the removed fetch as a deliberate simplification; `lib/messages/utils.ts:33-47` documents the `time.created = 0` sentinel with its caveat.

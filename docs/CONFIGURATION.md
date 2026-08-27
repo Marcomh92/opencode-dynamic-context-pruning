@@ -41,7 +41,7 @@ Note: on case-insensitive filesystems (Windows, default macOS HFS+/APFS), the _f
 | `<name>` (single tag) | Matches the entire `<name>...</name>` block including content (lazy match). Regex special chars in `name` are escaped. | Strip synthetic blocks injected by third-party plugins (e.g. `<available-skills>` from `opencode-agent-delegation` / `opencode-agent-skills`). |
 | Any other string      | Literal substring match. All regex special chars are escaped.                                                          | Strip arbitrary markers (e.g. `[TODO]`, `End of section`).                                                                                     |
 
-The strip runs at the transform-pipeline level (step 2 in `lib/hooks.ts:248-254`, right after `stripHallucinations`) and applies to every outbound LLM call — not just compress. Entries are hard-capped at 32 by `validateConfigTypes`; see the `lib/config.ts:541-546` ponytail for the per-fire cost rationale.
+The strip runs at the protected-text injection point in `lib/compress/protected-content.ts` (`appendProtectedUserMessages` and `appendProtectedPromptInfo`). It is applied to the verbatim user-message dump of a compression summary only — the agent still sees the original block in its live conversation. Entries are hard-capped at 32 by `validateConfigTypes`; see the `lib/config.ts:541-546` ponytail for the per-fire cost rationale.
 
 ## Validation
 

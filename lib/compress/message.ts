@@ -113,6 +113,7 @@ export function createCompressMessageTool(ctx: ToolContext): ReturnType<typeof t
                     searchContext,
                     ctx.state,
                     ctx.config.compress.protectTags,
+                    ctx.config.compress.stripPatterns,
                 )
 
                 const summaryWithTools = await appendProtectedTools(

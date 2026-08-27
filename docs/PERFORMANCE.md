@@ -6,22 +6,22 @@ Performance budgets and trade-offs. The plugin is on the hot path of every LLM c
 
 The hot path is `experimental.chat.messages.transform`. It runs once per LLM call. The work is O(n) over the visible message stream where n is the number of messages after OpenCode's own filtering.
 
-| Phase                           | Order | Complexity                                                                       |
-| ------------------------------- | ----- | -------------------------------------------------------------------------------- |
-| `stripHallucinations`           | 1     | O(total text bytes)                                                              |
-| `stripPatterns`                 | 2     | O(parts × patterns × text); early-returns when `compress.stripPatterns` is empty |
-| `cacheSystemPromptTokens`       | 3     | O(1)                                                                             |
-| `assignMessageRefs`             | 4     | O(n)                                                                             |
-| `syncCompressionBlocks`         | 5     | O(active blocks)                                                                 |
-| `syncToolCache`                 | 6     | O(n)                                                                             |
-| `buildToolIdList`               | 7     | O(n)                                                                             |
-| `prune`                         | 8     | O(n × parts per message)                                                         |
-| `injectExtendedSubAgentResults` | 9     | O(subagent cache hits)                                                           |
-| `buildPriorityMap`              | 10    | O(n) (message mode only)                                                         |
-| `injectCompressNudges`          | 11    | O(n)                                                                             |
-| `injectMessageIds`              | 12    | O(n)                                                                             |
-| `applyPendingManualTrigger`     | 13    | O(1)                                                                             |
-| `stripStaleMetadata`            | 14    | O(n)                                                                             |
+| Phase                           | Order | Complexity                                                                                                                                                                        |
+| ------------------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stripHallucinations`           | 1     | O(total text bytes)                                                                                                                                                               |
+| `cacheSystemPromptTokens`       | 2     | O(1)                                                                                                                                                                              |
+| `assignMessageRefs`             | 3     | O(n)                                                                                                                                                                              |
+| `syncCompressionBlocks`         | 4     | O(active blocks)                                                                                                                                                                  |
+| `syncToolCache`                 | 5     | O(n)                                                                                                                                                                              |
+| `buildToolIdList`               | 6     | O(n)                                                                                                                                                                              |
+| `prune`                         | 7     | O(n × parts per message)                                                                                                                                                          |
+| `injectExtendedSubAgentResults` | 8     | O(subagent cache hits)                                                                                                                                                            |
+| `buildPriorityMap`              | 9     | O(n) (message mode only)                                                                                                                                                          |
+| `injectCompressNudges`          | 10    | O(n)                                                                                                                                                                              |
+| `injectMessageIds`              | 11    | O(n)                                                                                                                                                                              |
+| `applyPendingManualTrigger`     | 12    | O(1)                                                                                                                                                                              |
+| `stripStaleMetadata`            | 13    | O(n)                                                                                                                                                                              |
+| `stripText`                     | —     | Runs only inside `appendProtectedUserMessages` / `appendProtectedPromptInfo` in `lib/compress/protected-content.ts`; cost is paid per compress tool invocation, not per LLM call. |
 
 ## Cache-aware trade-off (PER-001)
 
