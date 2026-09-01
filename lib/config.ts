@@ -36,6 +36,12 @@ export interface CompressConfig {
     protectedTools: string[]
     protectTags: boolean
     protectUserMessages: boolean
+    // BUG-096: cap on how many real user messages get protected when
+    // `protectUserMessages: true`. The "last N" are taken from the
+    // caller-supplied message list (compression range in range mode, full
+    // session in message mode). Synthetic / ignored user messages do not
+    // count toward N. Default 1 = protect only the most recent user message.
+    protectUserMessagesCount?: number
     stripPatterns: string[]
     // v2 fork protocol (issue #573 + #590, PLAN §6.1-§6.3).
     maxCompactionRatio: number
@@ -148,6 +154,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "compress.protectedTools",
     "compress.protectTags",
     "compress.protectUserMessages",
+    "compress.protectUserMessagesCount",
     "compress.stripPatterns",
     "compress.maxCompactionRatio",
     "compress.maxContextLimitRecovery",
@@ -516,6 +523,27 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     key: "compress.protectUserMessages",
                     expected: "boolean",
                     actual: typeof compress.protectUserMessages,
+                })
+            }
+
+            if (
+                compress.protectUserMessagesCount !== undefined &&
+                typeof compress.protectUserMessagesCount !== "number"
+            ) {
+                errors.push({
+                    key: "compress.protectUserMessagesCount",
+                    expected: "number",
+                    actual: typeof compress.protectUserMessagesCount,
+                })
+            }
+            if (
+                typeof compress.protectUserMessagesCount === "number" &&
+                compress.protectUserMessagesCount < 1
+            ) {
+                errors.push({
+                    key: "compress.protectUserMessagesCount",
+                    expected: "positive number (>= 1)",
+                    actual: `${compress.protectUserMessagesCount} (will be clamped to 1)`,
                 })
             }
 
@@ -938,6 +966,10 @@ const defaultConfig: PluginConfig = {
         protectedTools: [...COMPRESS_DEFAULT_PROTECTED_TOOLS],
         protectTags: false,
         protectUserMessages: false,
+        // BUG-096: default 1 = only the most recent real user message is
+        // protected when `protectUserMessages: true`. Set higher to protect
+        // the last N. Clamped to 1 if < 1.
+        protectUserMessagesCount: 1,
         stripPatterns: [],
         maxCompactionRatio: 0.7,
         maxContextLimitRecovery: 3,
@@ -1113,6 +1145,13 @@ function mergeCompress(
         protectedTools: override.protectedTools ?? base.protectedTools,
         protectTags: override.protectTags ?? base.protectTags,
         protectUserMessages: override.protectUserMessages ?? base.protectUserMessages,
+        // BUG-096: cap on protected user messages. clampMin1 so a user typo
+        // of 0 or -1 falls back to 1 (not 0 = nothing protected, which would
+        // silently disable the feature). base always has the field (defaultConfig),
+        // so the ?? base fallback is only hit if override explicitly sets undefined.
+        protectUserMessagesCount: clampMin1(
+            override.protectUserMessagesCount ?? base.protectUserMessagesCount ?? 1,
+        ),
         // ponytail: replace-semantics per user override (same as protectedTools).
         // The user's dcp.jsonc is the single source of truth — `stripPatterns: []`
         // must mean "strip nothing", not "merge with a hardcoded default".

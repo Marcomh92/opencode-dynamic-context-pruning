@@ -81,6 +81,10 @@ function buildConfig(overrides: Partial<PluginConfig["experimental"]> = {}): Plu
             protectedTools: [],
             protectTags: false,
             protectUserMessages: false,
+            // BUG-096: default 1 (protect only the most recent real user
+            // message). Not exercised in this file (protectUserMessages is
+            // always false), so the default is fine.
+            protectUserMessagesCount: 1,
             maxCompactionRatio: 0.7,
             maxContextLimitRecovery: 3,
             recoveryFadeWindow: 5,

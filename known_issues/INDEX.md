@@ -10,6 +10,8 @@ This directory tracks known bugs, limitations, and design trade-offs in the `@ta
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------- | ------ |
 | BUG-093 | `verify-package.mjs` carve-out at line 193 checks the wrong path for `jsonc-parser` (bare specifier, not deep ESM)                               | Medium   | Open   |
 | BUG-095 | `compress.stripPatterns` runs in the transform pipeline and strips synthetic blocks from the LLM-bound context, not just the compression summary | Medium   | Open   |
+| BUG-096 | `compress.protectUserMessages: true` protects every user message; should protect only the last N (default 1)                                     | Low      | Fixed  |
+| BUG-097 | `appendGuidanceToDcpTag` uses `closeTag = ""`; close-tag splice is a no-op that depends on `lastIndexOf("")` quirk                               | Low      | Open   |
 
 ## Severity Legend
 

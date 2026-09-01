@@ -52,6 +52,11 @@ function buildConfig(): PluginConfig {
             protectedTools: ["task"],
             protectTags: false,
             protectUserMessages: false,
+            // BUG-096: default 1 = protect only the most recent real user
+            // message when `protectUserMessages: true`. Tests below that
+            // exercise protection set `protectUserMessagesCount` explicitly
+            // to document intent.
+            protectUserMessagesCount: 1,
         },
         strategies: {
             deduplication: {
@@ -506,6 +511,12 @@ test("compress message mode skips protected user message references", async () =
     const logger = new Logger(false)
     const config = buildConfig()
     config.compress.protectUserMessages = true
+    // BUG-096: last-N semantics. With count=1, msg-user-1 (m0001) is the
+    // last (and only) real user message in buildMessages and therefore the
+    // protected one. The test invokes the compress tool with BLOCKED +
+    // m0001 + m0002 entries; expect 1 protected-skip (m0001), 1 blocked-skip
+    // (BLOCKED), and 1 success (m0002 → msg-assistant-2).
+    config.compress.protectUserMessagesCount = 1
 
     const tool = createCompressMessageTool({
         client: {

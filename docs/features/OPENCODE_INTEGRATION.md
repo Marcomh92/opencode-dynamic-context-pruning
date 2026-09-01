@@ -60,9 +60,10 @@ Subagent detection is one SDK call in `ensureSessionInitialized`; the result is 
 Third-party plugins (e.g. `opencode-agent-delegation`, `opencode-agent-skills`) can inject synthetic user-message bodies containing tag-shaped blocks like `<available-skills>...</available-skills>`. Two layers of protection apply:
 
 - **Flag-level exclusion (BUG-094).** `isIgnoredUserMessage` recognises `part.synthetic: true` as a skip signal, so synthetic-flagged messages are excluded from `isProtectedUserMessage` and do not appear verbatim in compression summaries under `compress.protectUserMessages: true`.
+- **Last-N scope (BUG-096).** `compress.protectUserMessages: true` protects the last N real user messages, where N is `compress.protectUserMessagesCount` (default 1), not every real user message in scope. The "last N" is taken from the caller-supplied message list (compression range in range mode, full session in message mode). Synthetic / ignored user messages (BUG-094) do not count toward N and are still skipped. Default 1 = only the most recent user message. Set higher to opt back into the v3.1.19 "all" behavior.
 - **Content-level strip (`compress.stripPatterns`).** Applied inside the protected-text builders (`appendProtectedUserMessages`, `appendProtectedPromptInfo`) before the verbatim user-message dump is appended. The LLM still sees the block in its live context; only the protected section of a compression summary is sanitized.
 
-The two layers are independent and complementary. The flag-level fix is the safe default; the content-level strip is the explicit user opt-in. See `docs/features/PRUNING.md` INV-P7 and `docs/CONFIGURATION.md` "Strip patterns".
+The three layers are independent and complementary. The flag-level fix is the safe default; the last-N scope (BUG-096) bounds the verbosity budget; the content-level strip is the explicit user opt-in. See `docs/features/PRUNING.md` INV-P7 and `docs/CONFIGURATION.md` "Strip patterns" and "Last-N user message protection".
 
 ## TUI entrypoint
 

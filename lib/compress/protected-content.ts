@@ -17,6 +17,7 @@ export function appendProtectedUserMessages(
     state: SessionState,
     enabled: boolean,
     stripPatterns: readonly string[] = [],
+    count: number = Number.POSITIVE_INFINITY,
 ): string {
     if (!enabled) return summary
 
@@ -36,18 +37,33 @@ export function appendProtectedUserMessages(
         const parts = Array.isArray(message.parts) ? message.parts : []
         for (const part of parts) {
             if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
-                userTexts.push(stripText(part.text, stripPatterns))
+                // BUG-096: messages whose text is fully consumed by
+                // stripPatterns are filtered out AND do not count toward
+                // the "last N" cap. Push only when the stripped result
+                // still has visible content.
+                const stripped = stripText(part.text, stripPatterns)
+                if (stripped.trim()) {
+                    userTexts.push(stripped)
+                }
                 break
             }
         }
     }
 
-    if (userTexts.length === 0) {
+    // BUG-096: take only the last N real user messages from the
+    // compression range. `userTexts` is already in selection order, so
+    // a tail slice gives the most recent N. `Number.POSITIVE_INFINITY`
+    // (the default) keeps the legacy "all" behaviour for callers that
+    // do not pass a cap.
+    const lastN =
+        count >= userTexts.length || !Number.isFinite(count) ? userTexts : userTexts.slice(-count)
+
+    if (lastN.length === 0) {
         return summary
     }
 
     const heading = "\n\nThe following user messages were sent in this conversation verbatim:"
-    const body = userTexts.map((text) => `\n${text}`).join("")
+    const body = lastN.map((text) => `\n${text}`).join("")
     return summary + heading + body
 }
 

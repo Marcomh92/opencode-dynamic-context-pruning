@@ -46,6 +46,11 @@ function buildConfig(mode: "message" | "range" = "message"): PluginConfig {
             protectedTools: ["task"],
             protectTags: false,
             protectUserMessages: false,
+            // BUG-096: default 1 = only the most recent real user message is
+            // protected when `protectUserMessages: true`. Tests below that
+            // exercise the new "last N" semantics set this explicitly to
+            // document intent.
+            protectUserMessagesCount: 1,
         },
         strategies: {
             deduplication: {
@@ -419,8 +424,18 @@ test("message-mode nudges append to existing text parts and list only earlier vi
     assert.doesNotMatch((injectedNudge as any).text, /m0004/)
 })
 
-test("message-mode nudges exclude protected user messages from priority guidance", () => {
-    const sessionID = "ses_message_blocked_priority_nudges"
+test("BUG-096 last-N: priority map excludes only the LAST protected user message", () => {
+    // BUG-096: `protectUserMessages: true` now protects only the last N real
+    // user messages (default N=1), not every user message. With count=1,
+    // msg-user-2 (the LAST real user message) is the only protected one.
+    // msg-user-1 (an older user message) and msg-assistant-1 are NOT
+    // protected and SHOULD appear in the priority map.
+    //
+    // This test calls buildPriorityMap directly to sidestep the
+    // `appendGuidanceToDcpTag` injection path (which has a separate
+    // `closeTag = ""` quirk tracked in known_issues/). The contract being
+    // tested is the priority-map composition, not the injection mechanics.
+    const sessionID = "ses_bug096_priority_scope"
     const messages: WithParts[] = [
         buildMessage("msg-user-1", "user", sessionID, repeatedWord("alpha", 6000), 1),
         buildMessage("msg-assistant-1", "assistant", sessionID, repeatedWord("beta", 6000), 2),
@@ -429,31 +444,32 @@ test("message-mode nudges exclude protected user messages from priority guidance
     const state = createSessionState()
     const config = buildConfig()
     config.compress.protectUserMessages = true
+    config.compress.protectUserMessagesCount = 1
 
     assignMessageRefs(state, messages)
-    state.nudges.contextLimitAnchors.add("msg-user-2")
+    const priorities = buildPriorityMap(config, state, messages)
 
-    const compressionPriorities = buildPriorityMap(config, state, messages)
-
-    applyAnchoredNudges(
-        state,
-        config,
-        messages,
-        {
-            system: "",
-            compressRange: "",
-            compressMessage: "",
-            contextLimitNudge: "<dcp-system-reminder>Base context nudge</dcp-system-reminder>",
-            turnNudge: "<dcp-system-reminder>Base turn nudge</dcp-system-reminder>",
-            iterationNudge: "<dcp-system-reminder>Base iteration nudge</dcp-system-reminder>",
-        },
-        compressionPriorities,
+    // msg-user-2 is the protected LAST user message → excluded from the
+    // priority map entirely (no ref gets allocated for priority context).
+    assert.equal(
+        priorities.get("msg-user-2"),
+        undefined,
+        "msg-user-2 (the protected last user message) must be excluded from the priority map under last-N=1",
     )
-
-    const injectedNudge = messages[2]?.parts[0]
-    assert.equal(injectedNudge?.type, "text")
-    assert.match((injectedNudge as any).text, /High-priority message IDs before this point: m0002/)
-    assert.doesNotMatch((injectedNudge as any).text, /m0001/)
+    // msg-user-1 is an older user message that is NOT the last one, so it
+    // is NOT protected under last-N=1 → it joins the priority map.
+    assert.equal(
+        priorities.get("msg-user-1")?.priority,
+        "high",
+        "msg-user-1 is NOT protected under last-N=1 and joins the priority map",
+    )
+    // msg-assistant-1 is an assistant message — `protectUserMessages` only
+    // gates user messages, so the assistant is not affected.
+    assert.equal(
+        priorities.get("msg-assistant-1")?.priority,
+        "high",
+        "msg-assistant-1 is not gated by protectUserMessages and joins the priority map",
+    )
 })
 
 test("range-mode nudges append to existing text parts before tool outputs", () => {

@@ -124,6 +124,33 @@ function buildMessages(sessionID: string): WithParts[] {
     ]
 }
 
+function mkUser(sessionID: string, id: string, text: string, created: number): WithParts {
+    return {
+        info: {
+            id,
+            role: "user",
+            sessionID,
+            agent: "assistant",
+            model: { providerID: "anthropic", modelID: "claude-test" },
+            time: { created },
+        } as WithParts["info"],
+        parts: [textPart(id, sessionID, `${id}-p`, text)],
+    }
+}
+
+function mkAssistant(sessionID: string, id: string, text: string, created: number): WithParts {
+    return {
+        info: {
+            id,
+            role: "assistant",
+            sessionID,
+            agent: "assistant",
+            time: { created },
+        } as WithParts["info"],
+        parts: [textPart(id, sessionID, `${id}-p`, text)],
+    }
+}
+
 test("compress range rebuilds subagent message refs after session state was reset", async () => {
     const sessionID = `ses_subagent_compress_${Date.now()}`
     const rawMessages = buildMessages(sessionID)
@@ -383,7 +410,181 @@ test("compress range mode rejects overlapping batched ranges", async () => {
 
     assert.equal(state.prune.messages.blocksById.size, 0)
 })
-// Logic Verified: range mode rebuilds subagent message refs after session reset, appends protected prompt info, batches multiple ranges, and rejects overlapping ranges.
+// End-to-end coverage of compress.protectUserMessagesCount through
+// createCompressRangeTool. The unit-level count behavior is pinned in
+// tests/protected-user-messages-count.test.ts; this test covers the
+// wiring from compress.protectUserMessagesCount through to
+// appendProtectedUserMessages (range.ts:134-146), the gap flagged by
+// the BUG-096 second reviewer.
+test("compress range mode respects protectUserMessagesCount", async () => {
+    // 5 user + 3 assistant messages interleaved so the selection-order
+    // walk in appendProtectedUserMessages has to skip non-user roles.
+    // With agent="assistant" on every message, injectMessageIds assigns
+    // sequential m0001..m0008 in array order.
+    const sessionID = `ses_range_protect_user_count_${Date.now()}`
+    const rawMessages: WithParts[] = [
+        mkUser(sessionID, "msg-user-1", "U1: first real user message", 1),
+        mkAssistant(sessionID, "msg-assistant-1", "A1: first assistant reply", 2),
+        mkUser(sessionID, "msg-user-2", "U2: second real user message", 3),
+        mkAssistant(sessionID, "msg-assistant-2", "A2: second assistant reply", 4),
+        mkUser(sessionID, "msg-user-3", "U3: third real user message", 5),
+        mkAssistant(sessionID, "msg-assistant-3", "A3: third assistant reply", 6),
+        mkUser(sessionID, "msg-user-4", "U4: fourth real user message", 7),
+        mkUser(sessionID, "msg-user-5", "U5: fifth real user message", 8),
+    ]
+
+    // ── protectUserMessagesCount = 2 ──────────────────────────────────
+    // Selection covers all 8 messages; expected to keep ONLY u-4 and u-5.
+    const state2 = createSessionState()
+    const config2 = buildConfig()
+    config2.compress.protectUserMessages = true
+    config2.compress.protectUserMessagesCount = 2
+
+    const tool2 = createCompressRangeTool({
+        client: {
+            session: {
+                messages: async () => ({ data: rawMessages }),
+                get: async () => ({ data: { parentID: null } }),
+            },
+        },
+        state: state2,
+        logger: new Logger(false),
+        config: config2,
+        prompts: {
+            reload() {},
+            getRuntimePrompts() {
+                return { compressRange: "", compressMessage: "" }
+            },
+        },
+    } as any)
+
+    await tool2.execute(
+        {
+            topic: "Last-N protected user messages (count=2)",
+            content: [
+                {
+                    startId: "m0001",
+                    endId: "m0008",
+                    summary: "Captured interleaved user and assistant messages.",
+                },
+            ],
+        },
+        {
+            ask: async () => {},
+            metadata: () => {},
+            sessionID,
+            messageID: "msg-compress-range-protect-user-count-2",
+        },
+    )
+
+    const block2 = Array.from(state2.prune.messages.blocksById.values())[0] as any
+    const summary2: string = block2?.summary || ""
+
+    assert.match(
+        summary2,
+        /The following user messages were sent in this conversation verbatim:/,
+        "the protected-section heading is present under protectUserMessagesCount=2",
+    )
+    assert.ok(
+        summary2.includes("U4: fourth real user message"),
+        "the 4th user message is included under protectUserMessagesCount=2 (last 2 = u-4, u-5)",
+    )
+    assert.ok(
+        summary2.includes("U5: fifth real user message"),
+        "the 5th (last) user message is included under protectUserMessagesCount=2",
+    )
+    assert.doesNotMatch(
+        summary2,
+        /\nU1: first real user message\n/,
+        "the 1st user message is excluded under protectUserMessagesCount=2",
+    )
+    assert.doesNotMatch(
+        summary2,
+        /\nU2: second real user message\n/,
+        "the 2nd user message is excluded under protectUserMessagesCount=2",
+    )
+    assert.doesNotMatch(
+        summary2,
+        /\nU3: third real user message\n/,
+        "the 3rd user message is excluded under protectUserMessagesCount=2",
+    )
+    for (const aText of [
+        "A1: first assistant reply",
+        "A2: second assistant reply",
+        "A3: third assistant reply",
+    ]) {
+        assert.doesNotMatch(
+            summary2,
+            new RegExp(`\\n${aText}\\n`),
+            `assistant message text "${aText}" must not appear in the protected section`,
+        )
+    }
+
+    // ── protectUserMessagesCount = 1 ──────────────────────────────────
+    // Most common case: only the most recent user message is appended.
+    const state1 = createSessionState()
+    const config1 = buildConfig()
+    config1.compress.protectUserMessages = true
+    config1.compress.protectUserMessagesCount = 1
+
+    const tool1 = createCompressRangeTool({
+        client: {
+            session: {
+                messages: async () => ({ data: rawMessages }),
+                get: async () => ({ data: { parentID: null } }),
+            },
+        },
+        state: state1,
+        logger: new Logger(false),
+        config: config1,
+        prompts: {
+            reload() {},
+            getRuntimePrompts() {
+                return { compressRange: "", compressMessage: "" }
+            },
+        },
+    } as any)
+
+    await tool1.execute(
+        {
+            topic: "Last-N protected user messages (count=1)",
+            content: [
+                {
+                    startId: "m0001",
+                    endId: "m0008",
+                    summary: "Captured interleaved user and assistant messages.",
+                },
+            ],
+        },
+        {
+            ask: async () => {},
+            metadata: () => {},
+            sessionID: `${sessionID}_count1`,
+            messageID: "msg-compress-range-protect-user-count-1",
+        },
+    )
+
+    const block1 = Array.from(state1.prune.messages.blocksById.values())[0] as any
+    const summary1: string = block1?.summary || ""
+
+    assert.ok(
+        summary1.includes("U5: fifth real user message"),
+        "only the last user message is included under protectUserMessagesCount=1",
+    )
+    for (const text of [
+        "U1: first real user message",
+        "U2: second real user message",
+        "U3: third real user message",
+        "U4: fourth real user message",
+    ]) {
+        assert.doesNotMatch(
+            summary1,
+            new RegExp(`\\n${text}\\n`),
+            `"${text}" is excluded under protectUserMessagesCount=1`,
+        )
+    }
+})
+// Logic Verified: range mode rebuilds subagent message refs after session reset, appends protected prompt info, batches multiple ranges, rejects overlapping ranges, and respects protectUserMessagesCount end-to-end through createCompressRangeTool.
 // Bugs Documented: none.
 // Fakes Updated: none
 // Review Status: pending independent review.

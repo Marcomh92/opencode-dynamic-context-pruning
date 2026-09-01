@@ -53,6 +53,10 @@ function buildConfig(permission: "allow" | "ask" | "deny" = "allow"): PluginConf
             protectedTools: ["task"],
             protectTags: false,
             protectUserMessages: false,
+            // BUG-096: default 1 (protect only the most recent real user
+            // message). Not exercised in this file (protectUserMessages is
+            // always false), so the default is fine.
+            protectUserMessagesCount: 1,
         },
         strategies: {
             deduplication: {

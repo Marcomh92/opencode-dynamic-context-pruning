@@ -138,6 +138,11 @@ export function createCompressRangeTool(ctx: ToolContext): ReturnType<typeof too
                     ctx.state,
                     ctx.config.compress.protectUserMessages,
                     ctx.config.compress.stripPatterns,
+                    // BUG-096: last-N cap on protected user messages.
+                    // mergeCompress clamps the merged value to >= 1 via clampMin1,
+                    // so the value is safe to pass through; ?? 1 is belt-and-braces
+                    // for an undefined compress block (shouldn't, but cheap).
+                    ctx.config.compress.protectUserMessagesCount ?? 1,
                 )
 
                 const summaryWithPromptInfo = appendProtectedPromptInfo(

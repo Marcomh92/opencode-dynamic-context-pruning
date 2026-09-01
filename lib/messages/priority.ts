@@ -2,7 +2,12 @@ import type { PluginConfig } from "../config"
 import { countAllMessageTokens } from "../token-utils"
 import { isMessageCompacted } from "../state/utils"
 import type { SessionState, WithParts } from "../state"
-import { isIgnoredUserMessage, isProtectedUserMessage, messageHasCompress } from "./query"
+import {
+    computeProtectedUserMessageIds,
+    isIgnoredUserMessage,
+    isProtectedUserMessage,
+    messageHasCompress,
+} from "./query"
 
 const MEDIUM_PRIORITY_MIN_TOKENS = 500
 const HIGH_PRIORITY_MIN_TOKENS = 5000
@@ -27,12 +32,16 @@ export function buildPriorityMap(
     }
     const priorities: CompressionPriorityMap = new Map()
 
+    // BUG-096: compute the last-N set once, then check membership per
+    // message. O(n) up front, O(1) per check, total O(n) — same as before.
+    const protectedMessageIds = computeProtectedUserMessageIds(config, messages)
+
     for (const message of messages) {
         if (isIgnoredUserMessage(message)) {
             continue
         }
 
-        if (isProtectedUserMessage(config, message)) {
+        if (isProtectedUserMessage(config, message, protectedMessageIds)) {
             continue
         }
 

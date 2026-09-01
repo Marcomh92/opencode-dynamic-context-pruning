@@ -251,7 +251,13 @@
                 "protectUserMessages": {
                     "type": "boolean",
                     "default": false,
-                    "description": "When enabled, your messages are never lost during compression"
+                    "description": "When enabled, your messages are preserved verbatim during compression (see protectUserMessagesCount for the cap)"
+                },
+                "protectUserMessagesCount": {
+                    "type": "number",
+                    "default": 1,
+                    "minimum": 1,
+                    "description": "When protectUserMessages is true, only the last N real user messages are preserved verbatim. Default 1 = only the most recent user message. Set higher to protect the last N (or a very large number for the legacy \"all\" behavior). Clamped to 1 if < 1. See docs/CONFIGURATION.md \"Last-N user message protection\"."
                 },
                 "stripPatterns": {
                     "type": "array",
@@ -310,6 +316,7 @@
                 "protectedTools": [],
                 "protectTags": false,
                 "protectUserMessages": false,
+                "protectUserMessagesCount": 1,
                 "stripPatterns": [],
                 "maxCompactionRatio": 0.7,
                 "maxContextLimitRecovery": 3,

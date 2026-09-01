@@ -1,7 +1,11 @@
 import type { PluginConfig } from "../config"
 import type { SessionState } from "../state"
 import { parseBoundaryId } from "../message-ids"
-import { isIgnoredUserMessage, isProtectedUserMessage } from "../messages/query"
+import {
+    computeProtectedUserMessageIds,
+    isIgnoredUserMessage,
+    isProtectedUserMessage,
+} from "../messages/query"
 import { resolveAnchorMessageId, resolveBoundaryIds, resolveSelection } from "./search"
 import { COMPRESSED_BLOCK_HEADER } from "./state"
 import type {
@@ -154,6 +158,12 @@ export function resolveMessages(
     const plans: ResolvedMessageCompression[] = []
     const seenMessageIds = new Set<string>()
 
+    // BUG-096: compute the last-N protected set once for the whole batch
+    // (the set is session-wide, not per-entry). The mode check inside
+    // `isProtectedUserMessage` makes this a no-op in range mode; message
+    // mode is the only path that reaches the membership check here.
+    const protectedMessageIds = computeProtectedUserMessageIds(config, searchContext.rawMessages)
+
     for (const entry of args.content) {
         const normalizedMessageId = entry.messageId.trim()
         if (seenMessageIds.has(normalizedMessageId)) {
@@ -170,6 +180,7 @@ export function resolveMessages(
                 searchContext,
                 state,
                 config,
+                protectedMessageIds,
             )
             seenMessageIds.add(plan.entry.messageId)
             plans.push(plan)
@@ -195,6 +206,7 @@ function resolveMessage(
     searchContext: SearchContext,
     state: SessionState,
     config: PluginConfig,
+    protectedMessageIds: ReadonlySet<string>,
 ): ResolvedMessageCompression {
     if (entry.messageId.toUpperCase() === "BLOCKED") {
         throw new SoftIssue("blocked", "BLOCKED", "protected message")
@@ -229,7 +241,7 @@ function resolveMessage(
     )
     const selection = resolveSelection(searchContext, startReference, endReference)
 
-    if (isProtectedUserMessage(config, rawMessage)) {
+    if (isProtectedUserMessage(config, rawMessage, protectedMessageIds)) {
         throw new SoftIssue("protected", parsed.ref, "protected message")
     }
 

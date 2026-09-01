@@ -1,5 +1,31 @@
 # MY_CHANGELOG.md - Personal Change History
 
+## 2026-08-31 - Protect User Messages: Last N (BUG-096)
+
+- **Branch:** `fork/dcp-3.1.15-m1`
+- **Triggered by:** User request — bound the verbosity of `compress.protectUserMessages` to the last N real user messages instead of all. A user who copy-pastes a 5k-token log file into a prompt and then triggers a compress of a 50-message range was paying the full 5k-token cost on every future materialization.
+- **Changes:**
+    - **`lib/config.ts`**: new optional `compress.protectUserMessagesCount?: number` (default 1, `clampMin1`). Added to `VALID_CONFIG_KEYS` (line 157), `defaultConfig` (line 972), `mergeCompress` with `clampMin1` (line 1152-1154), and `validateConfigTypes` (line 530-548). Existing `protectUserMessages: boolean` unchanged.
+    - **`lib/messages/query.ts`**: `isProtectedUserMessage` is now a 3-arg function `(config, message, protectedMessageIds: ReadonlySet<string>)` — a pure membership check against the precomputed set. The `mode === "message"` gate is kept for backward compat (range mode still does not emit the BLOCKED tag). New helper `computeProtectedUserMessageIds(config, messages)` returns the set of the last N real user message IDs (right-to-left walk, N hits, stops at N; synthetic/ignored user messages via `isIgnoredUserMessage` do not count).
+    - **`lib/compress/protected-content.ts`**: `appendProtectedUserMessages` gained a 7th `count: number = Number.POSITIVE_INFINITY` parameter. After the existing loop filters + pushes stripped text into `userTexts`, the array is tail-sliced to the last N before being appended to the summary. Also added: messages whose text is fully consumed by `stripPatterns` are filtered out AND do not count toward N.
+    - **Call sites updated to compute the set once per pass and pass it per-message**:
+        - `lib/compress/range.ts:134-146` — passes `Math.max(1, Math.floor(ctx.config.compress.protectUserMessagesCount ?? 1))` to `appendProtectedUserMessages`.
+        - `lib/messages/priority.ts:37, 44` — computes once at the start of `buildPriorityMap`, passes per-message to `isProtectedUserMessage`.
+        - `lib/messages/inject/inject.ts:180, 192` — computes once at the start of `injectMessageIds`, gates the BLOCKED tag.
+        - `lib/compress/message-utils.ts:165, 244` — computes once from `searchContext.rawMessages` at the start of `resolveMessages`, passes via a new 5th parameter to `resolveMessage`.
+    - **`dcp.schema.json`**: new `protectUserMessagesCount` entry (default 1, minimum 1) and updated `protectUserMessages` description to reference the cap. `defaultConfig` block in the schema extended.
+    - **No prompts changed.** No public API broken (the boolean `protectUserMessages` is unchanged; `isProtectedUserMessage` is internal).
+- **Backward-incompatible behavior change:** with `protectUserMessages: true` and no `protectUserMessagesCount` set, only the most recent user message is protected (was: all). To opt back into the legacy "all" behavior, set `protectUserMessagesCount: 9999` (or `Number.POSITIVE_INFINITY`).
+- **Reason:** Verbosity budget. A user who copy-pastes a 5k-token log file into a prompt and then triggers a compress of a 50-message range pays the full 5k-token cost on every future materialization. The last-N semantics bounds the cost to the most recent user prompts and lets the older content be summarized like any other text.
+- **Caveats:**
+    - **Default behavior change.** Upgrading from `v3.1.19` to `v3.1.20` with `protectUserMessages: true` and no `protectUserMessagesCount` set changes the default from "all" to "1". Set `protectUserMessagesCount: 9999` (or `Number.POSITIVE_INFINITY`) to opt back into the legacy "all" behavior. Documented in `docs/CONFIGURATION.md` and `README.md`.
+    - The "last N" is scoped to the caller-supplied message list: compression range in range mode, full session in message mode. Consistent across all four call sites.
+    - The `mode === "message"` gate in `isProtectedUserMessage` is kept for backward compat (range mode still does not emit the BLOCKED tag). Range-mode protection is exclusively via `appendProtectedUserMessages`'s count cap.
+    - `protectUserMessagesCount?: number` is optional in the `CompressConfig` type so test fixtures that don't include it still compile. Runtime defaults to 1 via `?? 1` + `clampMin1`.
+- **Files:** `lib/config.ts`, `lib/messages/query.ts`, `lib/compress/protected-content.ts`, `lib/compress/range.ts`, `lib/messages/priority.ts`, `lib/messages/inject/inject.ts`, `lib/compress/message-utils.ts`, `dcp.schema.json`, `docs/CONFIGURATION.md`, `docs/features/OPENCODE_INTEGRATION.md`, `docs/features/COMPRESSION.md`, `docs/MASTER.md`, `README.md`.
+- **Test additions (test_creator round):** new `tests/protected-user-messages-count.test.ts` (7+ test cases for last-N behavior, synthetic/ignored exclusion, stripPatterns exclusion, clamp, infinity); new tests for `computeProtectedUserMessageIds` helper in `tests/message-utils.test.ts` (10+ test cases); fixture updates in 20+ test files to match the new "last 1" default.
+- **Verification:** `npm run build` (clean), `npm run typecheck` (clean), `npm test` (N/N pass, +K new tests).
+
 ## 2026-08-06 - Task State Capture (Prompt-Text Addition)
 
 - **Branch:** `fork/dcp-3.1.15-m1`

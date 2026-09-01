@@ -43,6 +43,34 @@ Note: on case-insensitive filesystems (Windows, default macOS HFS+/APFS), the _f
 
 The strip runs at the protected-text injection point in `lib/compress/protected-content.ts` (`appendProtectedUserMessages` and `appendProtectedPromptInfo`). It is applied to the verbatim user-message dump of a compression summary only — the agent still sees the original block in its live conversation. Entries are hard-capped at 32 by `validateConfigTypes`; see the `lib/config.ts:541-546` ponytail for the per-fire cost rationale.
 
+## Last-N user message protection (BUG-096)
+
+`compress.protectUserMessages: true` does not protect every real user message in the scope. It protects the **last N real user messages**, where N is `compress.protectUserMessagesCount`. Default `1` (only the most recent user message). Clamped to `>= 1` via `clampMin1` in `lib/config.ts:1152-1154`; non-numeric or `< 1` values fall back to `1` (`DPP-012`).
+
+| Key                                 | Default | Source                                  | Valid range    |
+| ----------------------------------- | ------- | --------------------------------------- | -------------- |
+| `compress.protectUserMessages`      | `false` | `lib/config.ts:38`                      | boolean        |
+| `compress.protectUserMessagesCount` | `1`     | `lib/config.ts:44`, `defaultConfig:972` | number, `>= 1` |
+
+**Semantics.** "Last N" is taken from the caller-supplied message list, in reverse order, walking right-to-left until N real user messages are collected. Synthetic / ignored user messages (per `isIgnoredUserMessage`, BUG-094) are skipped and do not count toward N.
+
+**`stripPatterns` exclusion is range-mode only.** `compress.stripPatterns` filtering happens inside `appendProtectedUserMessages` (`lib/compress/protected-content.ts`), which is the range-mode verbatim-text builder. Messages whose text is fully consumed by `stripPatterns` are excluded from the range-mode count. In message mode, BLOCKED tagging is a yes/no per message and does NOT consider `stripPatterns` because no verbatim text is rendered in message mode — a stripped-emptied user message still receives the BLOCKED tag if it falls within the last N. This is a deliberate scoping choice; if you need stripPatterns-aware protection in message mode, set `stripPatterns` to patterns that preserve at least one non-stripped token per protected message.
+
+**Legacy "all" behavior.** `Number.POSITIVE_INFINITY` (or any value `>=` the number of real user messages in scope) preserves the v3.1.19 "all" behavior. Set `protectUserMessagesCount: 9999` for a one-line "opt back in" migration.
+
+**Where the cap applies.**
+
+| Mode         | Site                                                                 | Effect of the cap                                                                                                                                                                    |
+| ------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Range mode   | `appendProtectedUserMessages` in `lib/compress/protected-content.ts` | Tail-slices the collected `userTexts` to the last N before appending the "verbatim" section. Caller `lib/compress/range.ts:146` passes the count via `Math.max(1, Math.floor(...))`. |
+| Message mode | `buildPriorityMap` in `lib/messages/priority.ts`                     | Pre-computes the set once from the full session, passes it to `isProtectedUserMessage` per message.                                                                                  |
+| Message mode | `injectMessageIds` in `lib/messages/inject/inject.ts`                | Same pattern; pre-computes once, gates the BLOCKED tag on the precomputed set.                                                                                                       |
+| Message mode | `resolveMessages` in `lib/compress/message-utils.ts`                 | Pre-computes once from `searchContext.rawMessages`, passes it to `resolveMessage` via a new 5th parameter. Rejects individual compress attempts on the protected messages.           |
+
+`computeProtectedUserMessageIds` is the single source of truth for the set (`lib/messages/query.ts:111-137`); all four call sites use it.
+
+**Default behavior change.** Upgrading from `v3.1.19` to `v3.1.20` with `compress.protectUserMessages: true` and no `protectUserMessagesCount` set changes the default from "all" to "1". This is a deliberate behavior change requested by the user; see `known_issues/fixed/BUG-096-protectusermessages-last-n.md`.
+
 ## Validation
 
 - Unknown keys and type errors trigger a delayed toast. The layer is still merged.
@@ -51,15 +79,17 @@ The strip runs at the protected-text injection point in `lib/compress/protected-
 
 ## Runtime defaults
 
-| Key                           | Default           | Source                                             |
-| ----------------------------- | ----------------- | -------------------------------------------------- |
-| `compress.mode`               | `range`           | `lib/config.ts` runtime defaults                   |
-| `compress.permission`         | `allow`           | `lib/config.ts` runtime defaults                   |
-| `compress.protectedTools`     | `[]`              | v2 fork; no default                                |
-| `compress.stripPatterns`      | `[]`              | `lib/config.ts:941`; no behavior change on default |
-| `autoUpdate`                  | `false`           | `lib/config.ts` runtime defaults                   |
-| `compress.stateMaxAgeDays`    | `null` (disabled) | `lib/config.ts`                                    |
-| `compress.stateRetentionDays` | `7`               | `lib/config.ts`                                    |
+| Key                                 | Default           | Source                                             |
+| ----------------------------------- | ----------------- | -------------------------------------------------- |
+| `compress.mode`                     | `range`           | `lib/config.ts` runtime defaults                   |
+| `compress.permission`               | `allow`           | `lib/config.ts` runtime defaults                   |
+| `compress.protectedTools`           | `[]`              | v2 fork; no default                                |
+| `compress.stripPatterns`            | `[]`              | `lib/config.ts:941`; no behavior change on default |
+| `compress.protectUserMessages`      | `false`           | `lib/config.ts` runtime defaults                   |
+| `compress.protectUserMessagesCount` | `1`               | `lib/config.ts` runtime defaults                   |
+| `autoUpdate`                        | `false`           | `lib/config.ts` runtime defaults                   |
+| `compress.stateMaxAgeDays`          | `null` (disabled) | `lib/config.ts`                                    |
+| `compress.stateRetentionDays`       | `7`               | `lib/config.ts`                                    |
 
 `compress.stateRetentionDays` is the wall-clock retention for files in the DCP storage dir. Days before state files are excluded from the fork candidate scan (mtime pre-filter, `lib/state/inherit.ts:365-398`) and deleted by the sweep on save (`lib/state/persistence.ts:101-155`). Default `7`. Values below 1 (including `0`, negative, and fractional) collapse to `null` (disabled) via `clampStateRetentionDays` (`lib/config.ts:1130-1135`) — the helper enforces this so a user typo of `-1` or `0` falls back to disabled instead of silently deleting every state file. Distinct from `compress.stateMaxAgeDays` (load gate, also disabled at `null`); `stateRetentionDays` is the sweep + scan threshold (file deletion); `stateMaxAgeDays` is the load-time rejection threshold (no file deletion). BUG-092.
 

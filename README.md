@@ -41,7 +41,7 @@ DCP supports two compression modes:
 - `range` mode compresses contiguous spans of conversation into one or more summaries.
 - `message` mode (experimental) compresses individual raw messages independently, letting the model manage context much more surgically.
 
-In `range` mode, when a new compression overlaps an earlier one, the earlier summary is nested inside the new one so information is preserved through layers of compression rather than diluted away. In both modes, protected tool outputs (such as subagents and skills) and protected file patterns are kept in compression summaries, ensuring that the most important information is never lost. You can also enable `protectUserMessages` to preserve your messages verbatim during compression, though note that large prompts (e.g. copy-pasting log files in the prompt) will then never be compressed away.
+In `range` mode, when a new compression overlaps an earlier one, the earlier summary is nested inside the new one so information is preserved through layers of compression rather than diluted away. In both modes, protected tool outputs (such as subagents and skills) and protected file patterns are kept in compression summaries, ensuring that the most important information is never lost. You can also enable `protectUserMessages` to preserve your messages verbatim during compression. By default only the most recent user message is preserved; set `protectUserMessagesCount` to a higher number to protect the last N. Note that large prompts (e.g. copy-pasted log files) will still be protected if they are among the last N — the verbatim dump size is bounded by N.
 
 ### Deduplication
 
@@ -160,8 +160,14 @@ Each level overrides the previous, so project settings take priority over global
         // Preserve text wrapped in <protect>...</protect> when compressed
         "protectTags": false,
         // Preserve your messages during compression.
-        // Warning: large copy-pasted prompts will never be compressed away
+        // Only the last N are kept verbatim (N = protectUserMessagesCount).
+        // Warning: large copy-pasted prompts within the last N will not be compressed away
         "protectUserMessages": false,
+        // When protectUserMessages is true, how many recent user messages to
+        // preserve verbatim. Default 1 = only the most recent user message.
+        // Set higher to protect the last N; set to a very large number to
+        // opt back into the legacy "protect all" behavior.
+        "protectUserMessagesCount": 1,
     },
     // Automatic pruning strategies
     "strategies": {

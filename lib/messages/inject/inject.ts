@@ -6,6 +6,7 @@ import { formatMessageIdTag } from "../../message-ids"
 import type { CompressionPriorityMap } from "../priority"
 import { compressPermission } from "../../compress-permission"
 import {
+    computeProtectedUserMessageIds,
     getLastUserMessage,
     isIgnoredUserMessage,
     isProtectedUserMessage,
@@ -171,6 +172,13 @@ export const injectMessageIds = (
         return
     }
 
+    // BUG-096: compute the last-N protected set once. In message mode the
+    // BLOCKED tag is emitted for the last N real user messages. In range
+    // mode the mode gate inside `isProtectedUserMessage` returns false
+    // (see ponytail note there), so the set is computed but unused in
+    // range mode — kept consistent with the priority map's call shape.
+    const protectedMessageIds = computeProtectedUserMessageIds(config, messages)
+
     for (const message of messages) {
         if (isIgnoredUserMessage(message)) {
             continue
@@ -181,7 +189,7 @@ export const injectMessageIds = (
             continue
         }
 
-        const isBlockedMessage = isProtectedUserMessage(config, message)
+        const isBlockedMessage = isProtectedUserMessage(config, message, protectedMessageIds)
         const priority =
             config.compress.mode === "message" && !isBlockedMessage
                 ? compressionPriorities?.get(message.info.id)?.priority
