@@ -447,7 +447,152 @@ test("appendProtectedUserMessages: a message with mixed text + inline stripped b
     assert.doesNotMatch(summary, /foo/, "the block content is gone from the protected section")
 })
 
-// Logic Verified: appendProtectedUserMessages correctly applies the last-N cap to real user messages; synthetic/ignored user messages and messages fully consumed by stripPatterns are filtered out and do not count toward N; the default Number.POSITIVE_INFINITY preserves the legacy "all" behavior.
+// ────────────────────────────────────────────────────────────────────────────
+// L. Per-message heading format — locks the body format produced by
+//    `appendProtectedUserMessages`:
+//        `\n\n### User message <i+1> of <len>\n<text>`
+//    See `lib/compress/protected-content.ts:65-74`. Each preserved user
+//    message is prefixed with a blank line + an ordinal `### User message`
+//    heading + a newline + the verbatim text. This gives every preserved
+//    entry a visible boundary so the agent can tell them apart.
+// ────────────────────────────────────────────────────────────────────────────
+
+test("appendProtectedUserMessages: count=3 emits a per-message heading '### User message <i> of 3' for each preserved message, in order", () => {
+    const ids = ["u-1", "u-2", "u-3"]
+    const messages = ids.map((id) => userMessage(id, [{ text: `msg-${id.slice(2)}` }]))
+
+    const summary = appendProtectedUserMessages(
+        "BASE",
+        selectionFor(ids),
+        buildSearchContext(messages),
+        emptyState(),
+        true,
+        [],
+        3,
+    )
+
+    // Each heading appears exactly once, in selection order.
+    const i1 = summary.indexOf("### User message 1 of 3")
+    const i2 = summary.indexOf("### User message 2 of 3")
+    const i3 = summary.indexOf("### User message 3 of 3")
+    assert.ok(i1 >= 0, "heading '1 of 3' is present")
+    assert.ok(i2 > i1, "heading '2 of 3' appears after '1 of 3'")
+    assert.ok(i3 > i2, "heading '3 of 3' appears after '2 of 3'")
+
+    // Each heading is immediately followed by the corresponding message text.
+    assert.match(summary, /### User message 1 of 3\nmsg-1/, "heading '1 of 3' is followed by msg-1")
+    assert.match(summary, /### User message 2 of 3\nmsg-2/, "heading '2 of 3' is followed by msg-2")
+    assert.match(summary, /### User message 3 of 3\nmsg-3/, "heading '3 of 3' is followed by msg-3")
+
+    // Legacy section heading still appears exactly once.
+    const legacyHeadingMatches = summary.match(
+        /The following user messages were sent in this conversation verbatim:/g,
+    )
+    assert.equal(
+        legacyHeadingMatches?.length ?? 0,
+        1,
+        "the legacy 'verbatim:' section heading appears exactly once",
+    )
+})
+
+test("appendProtectedUserMessages: count=1 with one real message emits '### User message 1 of 1'", () => {
+    const ids = ["u-1"]
+    const messages = ids.map((id) => userMessage(id, [{ text: `msg-${id.slice(2)}` }]))
+
+    const summary = appendProtectedUserMessages(
+        "BASE",
+        selectionFor(ids),
+        buildSearchContext(messages),
+        emptyState(),
+        true,
+        [],
+        1,
+    )
+
+    assert.ok(
+        summary.includes("### User message 1 of 1"),
+        "per-message heading reads '1 of 1' for a single preserved message",
+    )
+    assert.match(
+        summary,
+        /### User message 1 of 1\nmsg-1/,
+        "the '1 of 1' heading is immediately followed by msg-1",
+    )
+})
+
+test("appendProtectedUserMessages: per-message headings are separated by a blank line", () => {
+    // Two real messages, count=2. The body emits `\n\n### User message ...`
+    // for each entry, so the two `### User message` markers are separated
+    // by at least one blank line. This is the boundary-visibility fix the
+    // heading was added for — preserved messages must not visually run
+    // together.
+    const ids = ["u-1", "u-2"]
+    const messages = ids.map((id) => userMessage(id, [{ text: `msg-${id.slice(2)}` }]))
+
+    const summary = appendProtectedUserMessages(
+        "BASE",
+        selectionFor(ids),
+        buildSearchContext(messages),
+        emptyState(),
+        true,
+        [],
+        2,
+    )
+
+    // Both per-message headings are present, each preceded by a blank line.
+    assert.match(
+        summary,
+        /\n\n### User message 1 of 2\n/,
+        "the '1 of 2' heading is preceded by a blank line and ends with a newline",
+    )
+    assert.match(
+        summary,
+        /\n\n### User message 2 of 2\n/,
+        "the '2 of 2' heading is preceded by a blank line and ends with a newline",
+    )
+    // The two headings are separated by a blank line. Each entry ends
+    // with `<text>`, and the next entry begins with `\n\n### User message`,
+    // so the visible boundary between two adjacent preserved messages is
+    // `<text>\n\n### User message <i+1> of <len>` — `<text>` on its own
+    // line, then a blank line, then the next heading.
+    assert.ok(
+        summary.includes("msg-1\n\n### User message 2 of 2"),
+        "the two per-message headings are separated by a blank line (msg-1 then blank line then the next heading)",
+    )
+})
+
+test("appendProtectedUserMessages: no per-message heading is emitted when no protected messages survive", () => {
+    // Two user messages, both synthetic — `userTexts` is empty, so the
+    // early return at `lib/compress/protected-content.ts:61-63` fires and
+    // no heading/body is appended.
+    const messages = [
+        userMessage("u-1", [{ text: "msg-1", synthetic: true }]),
+        userMessage("u-2", [{ text: "msg-2", synthetic: true }]),
+    ]
+
+    const summary = appendProtectedUserMessages(
+        "BASE",
+        selectionFor(["u-1", "u-2"]),
+        buildSearchContext(messages),
+        emptyState(),
+        true,
+        [],
+        1,
+    )
+
+    assert.equal(
+        summary,
+        "BASE",
+        "summary is returned unchanged when no protected messages survive",
+    )
+    assert.doesNotMatch(
+        summary,
+        /### User message/,
+        "no per-message heading is emitted when the protected section is empty",
+    )
+})
+
+// Logic Verified: appendProtectedUserMessages correctly applies the last-N cap to real user messages; synthetic/ignored user messages and messages fully consumed by stripPatterns are filtered out and do not count toward N; the default Number.POSITIVE_INFINITY preserves the legacy "all" behavior; preserved messages are emitted with a `### User message <i+1> of <len>` heading per entry, separated from the next entry by a blank line; when no protected messages survive, the early return at protected-content.ts:61-63 fires and no per-message heading appears anywhere.
 // Bugs Documented: BUG-096
 // Fakes Updated: none
 // Review Status: pending independent review.

@@ -63,7 +63,18 @@ export function appendProtectedUserMessages(
     }
 
     const heading = "\n\nThe following user messages were sent in this conversation verbatim:"
-    const body = lastN.map((text) => `\n${text}`).join("")
+    // ponytail: per-message heading mirrors the heading style used in
+    // `appendProtectedTools` below (a `### ...` heading per protected
+    // item). We use a `\n\n` separator here so multiple entries get a
+    // blank line between them — the protected-tools section is one item
+    // per tool call so it does not need the same. Ordinal labels are
+    // local to this protected section — they are NOT `mNNNN` refs and
+    // have no stable meaning across re-materializations. Switch to
+    // OpenCode session IDs if the agent ever needs cross-transform
+    // anchoring.
+    const body = lastN
+        .map((text, i) => `\n\n### User message ${i + 1} of ${lastN.length}\n${text}`)
+        .join("")
     return summary + heading + body
 }
 
