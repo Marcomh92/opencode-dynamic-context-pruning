@@ -6,4 +6,6 @@ If direction has shifted, compress earlier ranges that are now less relevant.
 
 The goal is to filter noise and distill key information so context accumulation stays under control.
 Keep active context uncompressed.
+
+Call the \`compress\` tool exactly as named with complete, well-formed arguments (re-check its description for the required schema before calling).
 `

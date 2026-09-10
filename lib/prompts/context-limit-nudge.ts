@@ -5,6 +5,8 @@ You are at or beyond the configured max context threshold. This is an emergency 
 
 You MUST use the \`compress\` tool now. Do not continue normal exploration until compression is handled.
 
+The tool name is exactly \`compress\` — no prefix, abbreviation, or variation. Include all required argument fields in the call; a misnamed or partial call cannot execute and will be rejected.
+
 If you are in the middle of a critical atomic operation, finish that atomic step first, then compress immediately.
 
 SELECTION PROCESS

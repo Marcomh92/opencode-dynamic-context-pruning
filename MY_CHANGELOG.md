@@ -1,5 +1,25 @@
 # MY_CHANGELOG.md - Personal Change History
 
+## 2026-09-10 - Harden Nudge Prompts: Compress Tool Invocation Contract
+
+- **Branch:** `fork/dcp-3.1.15-m1`
+- **Triggered by:** Repeated user-facing runtime error: `Model tried to call unavailable tool 'invalid'. Available tools: ...`. Diagnosis (do not re-derive): the error string is Vercel AI SDK `NoSuchToolError`, not a plugin block. It fires when a model tool call fails parsing (unknown/mangled tool name or malformed JSON args); opencode's `experimental_repairToolCall` rewrites the failed call to a synthetic `toolName: "invalid"` sink, which then re-fails, producing the misleading final message. opencode issues #25789 and #21900 describe the same mechanism. On-disk evidence across 104 DCP session-state files: `recoveryForced: false` everywhere, `manualMode: true` nowhere — the v2 recovery/blocking gates never armed. Dominant observed pattern: subagent sessions accumulating 13-21 consecutive iteration nudges with zero compress calls. So the hardening targets the model side: cut the rate of misnamed / partially-specified `compress` calls so fewer land in the repair sink.
+- **Changes:**
+    - **`lib/prompts/iteration-nudge.ts`** (line 6, +1 line +1 blank): appended one reinforcing sentence after the existing "use the compress tool on it now" line. Pins the exact `compress` identifier, demands complete well-formed arguments per the tool's schema, forbids renamed/abbreviated/guessed tool names and forbids partial arguments.
+    - **`lib/prompts/turn-nudge.ts`** (line 10, +1 line +1 blank): appended one reinforcing sentence after "Keep active context uncompressed". Pins the exact `compress` identifier, demands complete well-formed arguments, reminds the model to re-check the tool's description for the required schema before calling.
+    - **`lib/prompts/context-limit-nudge.ts`** (line 8, +1 line +1 blank): appended one reinforcing sentence after the existing "You MUST use the `compress` tool now" line. Pins the exact `compress` identifier with no prefix/abbreviation/variation, requires all required argument fields, and explains that a misnamed or partial call cannot execute and will be rejected.
+    - **No code changes.** No config keys, no schema entries, no behavior-gate changes, no version bump. Bundled prompt text only.
+    - **BUG-017 envelope symmetry preserved.** All six bundled prompts (`system`, `compress-range`, `compress-message`, `context-limit-nudge`, `turn-nudge`, `iteration-nudge`) remain unwrapped raw source — no `<system-reminder>` / similar envelope tags added to the nudges.
+    - **Override path unchanged.** The three prompts remain user-overridable under `~/.config/opencode/dcp-prompts/overrides/` when `experimental.customPrompts` is true. The six `PROMPT_KEYS` remain overridable; format extensions (`RANGE_FORMAT_EXTENSION`, `MESSAGE_FORMAT_EXTENSION`) remain non-overridable per `DPP-015`.
+- **Reason:** Model-side hardening. The Vercel AI SDK `NoSuchToolError` / opencode repair-sink path can only be reduced by reducing malformed `compress` tool calls at the source. The plugin cannot intervene in opencode's `experimental_repairToolCall` rewrite (the plugin is a transform layer, not a tool registry), so the only signal the model has is the bundled prompt text. Strengthening that signal in the three nudges that most often lead to a `compress` invocation cuts the misname rate without changing plugin behavior or unregistering any tool.
+- **Caveats:**
+    - **Mode-agnostic wording.** The three nudges mention "the tool's schema" / "its description" rather than naming mode-specific fields (range mode and message mode have different argument schemas). The text remains useful in both modes; a user who wants per-mode precision must write overrides.
+    - **Override-only path.** Users with `experimental.customPrompts = true` who have replaced the bundled prompts with overrides do not see the hardening unless they also edit their overrides. There is no config flag or master toggle.
+    - **Not a fix for the repair sink.** The hardening reduces the rate at which bad calls land in `experimental_repairToolCall`'s `toolName: "invalid"` sink; the sink itself still exists. If opencode changes the rewrite behavior upstream, the diagnosis and the relevance of this hardening should be re-validated.
+- **Files:** `lib/prompts/iteration-nudge.ts`, `lib/prompts/turn-nudge.ts`, `lib/prompts/context-limit-nudge.ts`.
+- **Test additions:** none (prompt-text-only change, no new code paths).
+- **Verification:** `npm run typecheck` (clean), `npm test` (586/586 pass). Diff is +6 lines across the 3 files (one new sentence plus its leading blank separator per file).
+
 ## 2026-08-31 - Protect User Messages: Last N (BUG-096)
 
 - **Branch:** `fork/dcp-3.1.15-m1`
