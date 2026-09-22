@@ -23,13 +23,14 @@ Both providers cache at byte-prefix level. Per-tool pruning does NOT reduce cach
 
 **Verified for this user:** the user uses the OpenCode default MiniMax provider `MiniMax (minimax.io)`, resolved via OpenCode's bundled `models.dev` catalog (not in `BUNDLED_PROVIDERS`). All three MiniMax provider variants in models.dev (`minimax`, `minimax-cn`, `minimax-coding-plan`) use `@ai-sdk/anthropic`. **`applyCaching()` fires; cache_control markers are emitted on first 2 system messages + last 2 non-system messages. All MiniMax-side recommendations in this plan apply.**
 
-**The five changes that matter, ranked:**
+**The six changes that matter, ranked:**
 
 1. **Config change:** `turnProtection.turns: 8` (from 4) batches prune events. Fewer mutation events = fewer cache misses.
 2. **Config change:** `strategies.purgeErrors.turns: 4` (from 3) aligns error-purge cadence with the widened protection window.
-3. **Config change:** add `todowrite` to all three `protectedTools` lists (`commands`, `strategies.deduplication`, `strategies.purgeErrors`). Protect agent's live plan state from prune-replacement while still allowing compression. Cheap insurance, no token cost.
-4. **Source change:** add top-level `protectedFilePatternsTools: string[]` config to scope `protectedFilePatterns` to a tool allowlist. Default preserves current behavior; user override `["read"]` restricts to read-only plan preservation.
-5. **No-op on `protectedSkills`:** synthetic skill messages are already byte-stable, invisible to compression selection, not prunable, and have no `mNNNN` refs. Build only a regression test that pins the invariant; do NOT build preservation machinery.
+3. **Config change:** add `todowrite` and `goal_*` to all three `protectedTools` lists (`commands`, `strategies.deduplication`, `strategies.purgeErrors`). Protect agent's live plan state and persistent goal markers from prune-replacement while still allowing compression. Cheap insurance, no token cost.
+4. **Config change:** add `goal_*` to `compress.protectedTools`. Preserve `goal_*` outputs verbatim in compression summaries. Consistent state, not stale — keeping all is fine.
+5. **Source change:** add top-level `protectedFilePatternsTools: string[]` config to scope `protectedFilePatterns` to a tool allowlist. Default preserves current behavior; user override `["read"]` restricts to read-only plan preservation.
+6. **No-op on `protectedSkills`:** synthetic skill messages are already byte-stable, invisible to compression selection, not prunable, and have no `mNNNN` refs. Build only a regression test that pins the invariant; do NOT build preservation machinery.
 
 ---
 
@@ -204,6 +205,7 @@ Per-tool verdicts (user's hypothesis partially refuted):
 |---|---|---|---|
 | `read` | **NO** | No (plan files covered by `protectedFilePatterns`) | File on disk = recoverable. Re-read is one cheap tool call. Old reads become stale the moment the file changes — retaining stale bytes is a real correctness hazard. Protecting removes DCP's biggest token-savings surface. `turnProtection.turns: 8` already keeps the working set verbatim. False-positive risk > false-negative risk. |
 | `todowrite` | **YES** | No | Small output (hundreds of tokens), live plan state, recoverable via `todoread` but the friction derails long sessions. Cheap insurance. |
+| `goal_*` (`goal_get`, `goal_set`, `goal_patch`) | **YES** | **YES** | Persistent goal-state markers from the `opencode-self-improvement` plugin. Tiny output (~50-200 tokens each). Goal state is consistent (not stale like `read`); keeping all `goal_*` calls costs negligible tokens. |
 | `context7_*` | No | No | Large outputs, deterministic re-query. |
 | `brave-search_*` | No | No | Same. |
 | `webfetch` | No | No | Same. |
@@ -218,6 +220,19 @@ Per-tool verdicts (user's hypothesis partially refuted):
 **Incidental findings (not this change):**
 - `pruneToolInputs` (`lib/messages/prune.ts:119-146`) is effectively dead code: the pre-strip removes `question` callIDs before it runs, and it only handles `question`. Either wire differently or delete — future cleanup round.
 - The write-side/read-side protection asymmetry (compress propagation consults no list) is undocumented — one line for `07-docs-maintainer` in `docs/features/PRUNING.md`.
+
+### Finding 8 (new) — `goal_*` tools: protect all, not just the latest
+
+The `opencode-self-improvement` plugin's `goal_get`/`goal_set`/`goal_patch` tools are persistent goal-state markers. User hypothesis was "only the latest" (analogous to `protectUserMessagesCount`); the architect's recommendation is "protect all" — the outputs are tiny (~50-200 tokens each), accumulation cost is negligible, and "only the latest" mechanism adds real complexity without measurable benefit.
+
+Why "all" beats "latest" for `goal_*`:
+- Goal state is *consistent*, not *stale* (unlike `read` outputs which become stale on file change). Multiple copies of the same goal is harmless.
+- Goal-patch outputs reflect cumulative state, not independent operations. Dropping older patches loses no information because the latest goal reflects all prior changes.
+- A 30-call session accumulates ~6KB of `goal_*` output — 0.024% of a 250K context budget. Trivial.
+
+Implementation: `goal_*` glob added to `commands.protectedTools`, `strategies.deduplication.protectedTools`, `strategies.purgeErrors.protectedTools` (prune-side), AND `compress.protectedTools` (compression-summary verbatim append). Glob matching via `isToolNameProtected` (`lib/protected-patterns.ts:110-129`).
+
+If empirical experience later shows accumulation is a real issue, design Option B or C from the architect's review (latest-only with eviction). For now: keep all.
 
 ---
 
@@ -251,39 +266,45 @@ Sequenced. Each item lists the file, the change, the rationale, and verification
   "purgeErrors": {
     "enabled": true,
     "turns": 4,      // was 3
-    "protectedTools": ["task", "todowrite"]  //   // was ["task"]
+    "protectedTools": ["task", "todowrite", "goal_*"]  //   // was ["task"]
   }
 }
 ```
 
-**Rationale:** aligns error-purge cadence with the widened `turnProtection.turns: 8` so the two work together. Also adds `todowrite` protection (see Finding 7).
+**Rationale:** aligns error-purge cadence with the widened `turnProtection.turns: 8` so the two work together. Also adds `todowrite` and `goal_*` protection (see Findings 7 and 8).
 
-### Item 3 — `dcp.jsonc`: add `todowrite` to all three `protectedTools` lists (zero code)
+### Item 3 — `dcp.jsonc`: add `todowrite` and `goal_*` to all three `protectedTools` lists + `compress.protectedTools` (zero code)
 
 **File:** `C:\Users\marco\.config\opencode\dcp.jsonc`
-**Where:** three places.
+**Where:** four places.
 
 ```jsonc
 "commands": {
   "enabled": true,
-  "protectedTools": ["task", "todowrite"]   // was ["task"]
+  "protectedTools": ["task", "todowrite", "goal_*"]   // was ["task"]
+},
+"compress": {
+  "protectedTools": ["goal_*"],   // was []
+  // ... existing fields unchanged ...
 },
 "strategies": {
   "deduplication": {
     "enabled": true,
-    "protectedTools": ["task", "todowrite"]  // was ["task"]
+    "protectedTools": ["task", "todowrite", "goal_*"]  // was ["task"]
   },
   "purgeErrors": {
     "enabled": true,
     "turns": 4,
-    "protectedTools": ["task", "todowrite"]  // was ["task"]
+    "protectedTools": ["task", "todowrite", "goal_*"]  // was ["task"]
   }
 }
 ```
 
-**Rationale:** protects the agent's live plan state from prune-replacement. Cheap insurance; small output. See Finding 7.
+**Rationale:** protects the agent's live plan state (`todowrite`) and persistent goal markers (`goal_*`) from prune-replacement AND preserves `goal_*` outputs verbatim in compression summaries. Cheap insurance; small output. See Findings 7 and 8. Glob pattern `goal_*` matches `goal_get`, `goal_set`, `goal_patch`, and any future goal tools added by the opencode-self-improvement plugin.
 
 **Note:** `read` is INTENTIONALLY NOT in this list. See Finding 7 reasoning: pruning old `read` outputs is more correct than keeping them (stale bytes are a correctness hazard; re-read is one cheap tool call). `turnProtection.turns: 8` keeps the working set verbatim; plan-file reads are protected by `protectedFilePatterns`.
+
+**Note:** `task` is deliberately kept out of `compress.protectedTools` (the "summary append" list) to avoid bloating `summaryTokens` against the `maxCompactionRatio: 0.7` guard. `task` is protected from strategies/sweep (prune-side), but its full transcript is NOT appended verbatim to summaries.
 
 ### Item 4 — `dcp.jsonc`: remove `forkSchemaVersion` (zero code, optional)
 
@@ -568,7 +589,7 @@ Confirm:
 
 | Order | Item | Type | Rationale |
 |---|---|---|---|
-| 1 | `dcp.jsonc`: `turnProtection.turns: 8`, `strategies.purgeErrors.turns: 4`, **add `todowrite` to all three `protectedTools` lists**, remove `forkSchemaVersion` | Config only | Zero code, immediately measurable. Do today. Item 1 of config-only batch. |
+| 1 | `dcp.jsonc`: `turnProtection.turns: 8`, `strategies.purgeErrors.turns: 4`, **add `todowrite` and `goal_*` to all three `protectedTools` lists + `compress.protectedTools`**, remove `forkSchemaVersion` | Config only | Zero code, immediately measurable. Do today. Item 1 of config-only batch. todowrite+goal_* Item3 partially applied (you've done goal_* but not todowrite or the others yet). |
 | 2 | Verify MiniMax route via `npm run dcp` or `jq '.minimax.npm' ~/.cache/opencode/models.json` (already verified this session, but worth confirming on the actual machine) | Verification | Confirms cache_control is on. Already done in this session. |
 | 3 | Item 5: `protectedFilePatternsTools` (top-level) | Code | Then optionally set `["read"]` in config. Independent of 1–2. |
 | 4 | Item 7: `forkSchemaVersion` default hygiene | Code (trivial) | Unblocks config/schema/docs consistency; no behavior change. |
@@ -584,7 +605,7 @@ No conflicts between recommendations. The only tension is directional: `turns: 8
 
 1. **Build `protectedSkills` preservation machinery.** Verified unnecessary (Finding 1). Would be a regression.
 2. **Switch `compress.mode` to `"message"`.** Range mode is cache-correct; message mode adds `priority="..."` attributes that churn mid-context (`lib/messages/inject/inject.ts:189-198`).
-3. **Add a `protectedTools` slice for `task` at compression time.** Currently `compress.protectedTools: []`. Adding `"task"` would append full subagent transcripts verbatim into every overlapping compression summary, increasing `summaryTokens` and triggering more non-compacting runs. The user's `strategies.*.protectedTools: ["task"]` and `commands.protectedTools: ["task"]` protect against prune-replacement but not summary-bloat — that's the right balance.
+3. **Add a `protectedTools` slice for `task` at compression time.** Currently `compress.protectedTools: ["goal_*"]` (after Finding 8). Adding `"task"` would append full subagent transcripts verbatim into every overlapping compression summary, increasing `summaryTokens` and triggering more non-compacting runs. The user's `strategies.*.protectedTools: ["task", "todowrite", "goal_*"]` and `commands.protectedTools: ["task", "todowrite", "goal_*"]` protect against prune-replacement but not summary-bloat — that's the right balance.
 4. **Touch OpenCode's session storage.** DPP-001 hard rule.
 5. **Build a subagent-aware `protectedSkills`.** Out of scope; the user's `experimental.allowSubAgents: true` already permits subagents, but `use_skill` from subagents would still benefit from the synthetic-message invariant (Finding 1) without any new feature.
 
