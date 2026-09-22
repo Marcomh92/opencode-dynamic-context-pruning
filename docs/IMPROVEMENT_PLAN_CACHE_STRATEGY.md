@@ -10,16 +10,24 @@
 
 The `@tarquinen/opencode-dcp` plugin (fork v3.1.17) is already more cache-friendly than the original design assumed. Most operations are byte-stable across transform fires; the dominant cache-miss contributors are (1) compression-block materialization, (2) rolling prune replacements as tools age, and (3) MiniMax's 5-minute cache TTL on idle gaps. Provider mechanics:
 
-- **MiniMax (Anthropic-compatible):** explicit `cache_control` breakpoints, 5-minute TTL refreshed on hit, hash-based, 4 markers max, 20-block lookback, byte-exact prefix matching.
-- **DeepSeek:** automatic on-disk prefix cache, 64-token units, hours-to-days TTL, byte-strict prefix match, common-prefix recovery is best-effort (not immediate).
+- **MiniMax M3 (Anthropic-compatible):** explicit `cache_control` breakpoints, 5-minute TTL refreshed on hit, hash-based, 4 markers max, 20-block lookback, byte-exact prefix matching. Context window 1M tokens.
+- **DeepSeek v4.1 Flash:** automatic on-disk prefix cache, 64-token units, **72-hour guaranteed TTL**, byte-strict prefix match, common-prefix recovery is best-effort (not immediate). Context window 1M tokens (1,048,576). Model ID `deepseek-flash`. Cache hit pricing **~$0.003 per 1M tokens** (~9× cheaper than DeepSeek V3.x's $0.028 cache-hit price).
 
 Both providers cache at byte-prefix level. Per-tool pruning does NOT reduce cache blast radius — it only reduces token cost on a miss. The architectural lever is *mutation position* and *mutation frequency*, not mutation size.
 
+**⚠️ ROUTING DEPENDENCY:** OpenCode's emission of `cache_control` markers is conditional on the MiniMax routing path. Verified in `packages/opencode/src/provider/transform.ts:471-484` (anomalyco/opencode). The `applyCaching()` gate triggers only when `model.api.npm === "@ai-sdk/anthropic"` or model ID contains `anthropic`/`claude`.
+
+- **`opencode-go/minimax-m3`** (Go subscription, `@ai-sdk/anthropic`) → cache_control IS emitted → all MiniMax-side recommendations in this plan apply.
+- **`opencode/minimax-m3`** (Zen, `@ai-sdk/openai-compatible`) → cache_control is NOT emitted → caching is implicit prefix only → MiniMax-side recommendations in this plan are MOOT for that route.
+- **Custom anthropic-protocol provider** with `"npm": "@ai-sdk/anthropic"` + valid `baseURL` → cache_control emitted in principle, but known issues with third-party proxies (anomalyco/opencode#45750).
+
+**Verified for this user:** the user uses the OpenCode default MiniMax provider `MiniMax (minimax.io)`, resolved via OpenCode's bundled `models.dev` catalog (not in `BUNDLED_PROVIDERS`). All three MiniMax provider variants in models.dev (`minimax`, `minimax-cn`, `minimax-coding-plan`) use `@ai-sdk/anthropic`. **`applyCaching()` fires; cache_control markers are emitted on first 2 system messages + last 2 non-system messages. All MiniMax-side recommendations in this plan apply.**
+
 **The five changes that matter, ranked:**
 
-1. **Config fix (zero code):** add `compress.modelMaxLimits` / `compress.modelMinLimits` for DeepSeek. Current `maxContextLimit: 250000` exceeds DeepSeek's 128K context window, so context-limit nudge can never fire — DCP silently defers to OpenCode's full compaction (a total cache wipe).
-2. **Config change:** `turnProtection.turns: 8` (from 4) batches prune events. Fewer mutation events = fewer cache misses.
-3. **Config change:** `strategies.purgeErrors.turns: 4` (from 3) aligns error-purge cadence with the widened protection window.
+1. **Config change:** `turnProtection.turns: 8` (from 4) batches prune events. Fewer mutation events = fewer cache misses.
+2. **Config change:** `strategies.purgeErrors.turns: 4` (from 3) aligns error-purge cadence with the widened protection window.
+3. **Config change:** add `todowrite` to all three `protectedTools` lists (`commands`, `strategies.deduplication`, `strategies.purgeErrors`). Protect agent's live plan state from prune-replacement while still allowing compression. Cheap insurance, no token cost.
 4. **Source change:** add top-level `protectedFilePatternsTools: string[]` config to scope `protectedFilePatterns` to a tool allowlist. Default preserves current behavior; user override `["read"]` restricts to read-only plan preservation.
 5. **No-op on `protectedSkills`:** synthetic skill messages are already byte-stable, invisible to compression selection, not prunable, and have no `mNNNN` refs. Build only a regression test that pins the invariant; do NOT build preservation machinery.
 
@@ -84,16 +92,19 @@ prepareSession → resolveRanges → validateNonOverlapping
 - Active-session envelope: 78–88% with current config; 85–90% achievable with batching
 - Unfixable-by-DCP: 5-minute TTL on idle gaps — any pause >5 min evicts everything
 
-### 2.3 DeepSeek caching
+### 2.3 DeepSeek caching (v4.1 Flash)
 
-- Cache shape: automatic on-disk prefix cache, byte-strict
-- Storage unit: 64 tokens (content shorter than 64 tokens not cached)
-- TTL: hours to days, auto-cleared when unused, best-effort persistence
-- Common-prefix recovery: persists a diverged common prefix as its own unit only after observing divergence; best-effort, not immediate
-- Available on V2.5+, V3 (`deepseek-chat`), V3.1, V3.2 (latest as of January 2026), R1 (`deepseek-reasoner`)
-- Context window: 128K (V3.x). Note: `deepseek-chat` / `deepseek-reasoner` aliases retired 2026-07-24 → route to V4-Flash
-- Cache hit rate: 90–97% realistic
-- Envelope: hours-to-days TTL means head units persist across idle gaps and session breaks
+- **Model:** DeepSeek v4.1 Flash, GA 2026-09-10, model ID `deepseek-flash`. The legacy aliases `deepseek-chat` and `deepseek-reasoner` were retired 2026-07-24.
+- **Context window:** 1,048,576 tokens (1M) — same as MiniMax M3. The user's `maxContextLimit: 250000` is well within this.
+- **Cache shape:** automatic on-disk prefix cache, byte-strict prefix matching (no `cache_control` markers — implicit only).
+- **Storage unit:** 64 tokens (content shorter than 64 tokens not cached).
+- **TTL:** **72 hours guaranteed** (per DeepSeek V4.x technical report). This is a substantial improvement over V3.x's vague "hours to days" — predictable persistence for multi-day sessions.
+- **Common-prefix recovery:** persists a diverged common prefix as its own unit only after observing divergence; best-effort, not immediate.
+- **Minimum practical prefix:** <64 tokens not cached; <1024 tokens unreliable in practice.
+- **Pricing (off-peak):** $0.15 cache-miss / $0.003 cache-hit / $0.60 output per 1M tokens. No separate cache-write charge. Peak pricing doubles all rates.
+- **Comparison to V3.x:** V4.1 Flash cache hits are ~9× cheaper per cached token ($0.003 vs $0.028), with 8× more cache capacity. Aggressive caching is *more* economically justified on V4.1 Flash, not less.
+- **Architectural notes (no caching impact):** V4.x uses CED (Causal Encoder-Decoder) with compressed global KV (890 bytes/token, FP4) and SWA Bounded Replay. These are server-side optimizations; the API surface and caching semantics are unchanged.
+- **Realistic hit rate envelope:** 95–99% on long sessions (up from V3.x's 90–97%, due to the predictable 72h TTL).
 
 ### 2.4 Custom skills plugin (`opencode-agent-skills`)
 
@@ -106,7 +117,7 @@ Skill storage: `<projectDir>/.opencode/skills/`, `<projectDir>/.claude/skills/`,
 ### 2.5 User config state
 
 - **`dcp.jsonc`** (`C:\Users\marco\.config\opencode\dcp.jsonc`): full state captured earlier in this session. Already modified to set `commands.protectedTools: ["task"]`, `strategies.deduplication.protectedTools: ["task"]`, `strategies.purgeErrors.protectedTools: ["task"]`.
-- **`opencode.json`** (`C:\Users\marco\.config\opencode\opencode.json`): `*: "deny"` baseline; `permission.compress: "allow"`, `permission.use_skill: "allow"`, `permission.read: "allow"`, `permission.skill: "deny"` (platform native). `compaction.prune: true`. Plugins: opencode-agent-skills, opencode-agent-delegation, opencode-self-improvement, ponytail, plannotator, DCP fork, tokenscope. Providers: kimi-for-coding, lmstudio. MCPs: brave-search, context7, git, gitnexus, stitch.
+- **`opencode.json`** (`C:\Users\marco\.config\opencode\opencode.json`): `*: "deny"` baseline; `permission.compress: "allow"`, `permission.use_skill: "allow"`, `permission.read: "allow"`, `permission.skill: "deny"` (platform native). `compaction.prune: true`. Plugins: opencode-agent-skills, opencode-agent-delegation, opencode-self-improvement, ponytail, plannotator, DCP fork, tokenscope. Providers explicitly configured: kimi-for-coding (note: missing `npm`/`name`/`baseURL`), lmstudio. **MiniMax: routed via OpenCode's bundled models.dev catalog → `MiniMax (minimax.io)` provider (uses `@ai-sdk/anthropic`, `applyCaching()` fires — verified)**. MCPs: brave-search, context7, git, gitnexus, stitch.
 
 ---
 
@@ -130,16 +141,7 @@ They are not tool outputs, so `state.prune.tools` (which keys on tool callIDs) c
 
 **Conclusion:** `protectedSkills` preservation machinery would *duplicate* skill bodies into summaries, increasing `summaryTokens`, increasing non-compacting run rate against the `maxCompactionRatio: 0.7` guard (`docs/features/COMPRESSION.md` INV-6), and triggering more `recoveryForced` lockouts. Do not build it. Build only a regression test that pins the invariant.
 
-### Finding 2 — `maxContextLimit: 250000` exceeds DeepSeek's 128K context window
-
-DeepSeek V3.x context is 128K. With `maxContextLimit: 250000`:
-- Context-limit nudge never fires on DeepSeek sessions
-- DCP silently defers to OpenCode's own compaction (`compaction.prune: true`)
-- OpenCode compaction is a **total cache wipe** — full-history rewrite
-
-Fix: use the existing `compress.modelMaxLimits` / `compress.modelMinLimits` knobs (already in the user's config, currently `{}`) to set per-model thresholds. Zero code change required.
-
-### Finding 3 — `turnProtection.turns` is the prune-batching knob
+### Finding 2 — `turnProtection.turns` is the prune-batching knob
 
 `state.toolCache` honors `turnProtection.enabled` and `turnProtection.turns` (`lib/state/tool-cache.ts:39-52`). When enabled, tool parameters entries for the most recent N turns are NOT cached — meaning dedup and purgeErrors (which look up via `state.toolParameters.get(id)`) cannot mark those calls.
 
@@ -147,7 +149,7 @@ A wider window delays marking so multiple obsolete outputs cross the threshold t
 
 User's current value: 4. Proposed: 8. Reliability cost: slightly higher per-call tokens for ~4 extra turns (obsolete outputs kept verbatim longer). Reliability benefit: more recent context preserved.
 
-### Finding 4 — `protectedFilePatterns` is not just compress-scoped
+### Finding 3 — `protectedFilePatterns` is not just compress-scoped
 
 The pattern matching happens in `getFilePathsFromParameters` (`lib/protected-patterns.ts:61-99`), called from five sites:
 
@@ -161,44 +163,69 @@ The pattern matching happens in `getFilePathsFromParameters` (`lib/protected-pat
 
 Two of five sites are NOT compress-scoped. A `compress.protectedFilePatternsTools` config would be a layering lie. The new key must be top-level (sibling of `protectedFilePatterns`).
 
-### Finding 5 — `forkSchemaVersion` config default is runtime-inert but misleading
+### Finding 4 — `forkSchemaVersion` config default is runtime-inert but misleading
 
 `lib/state/persistence.ts:546-547` schema gate compares against the **code constant** `FORK_SCHEMA_VERSION = 4` (`lib/state/types.ts:208`). Saves always stamp the constant (`lib/state/state.ts:93, 150`), and the recovery-field round-trip (`state.ts:301-311`) is unconditional. So setting `forkSchemaVersion: 3` in user config has no runtime effect — but the default drift (`lib/config.ts:977` says `3`, schema says `3`, code says `4`) is a loaded footgun. Several docs still say `= 3` (`docs/PATTERNS.md:66`, `docs/DESIGN_PRINCIPLES.md:25`, `docs/features/STATE_PERSISTENCE.md:11`). Worth a one-line cleanup.
+
+### Finding 5 (new) — DeepSeek v4.1 Flash economics favor aggressive caching
+
+With V4.1 Flash's 1M context window, 72h TTL, and $0.003/M cache-hit pricing, the user's `maxContextLimit: 250000` is only 25% of the available window. Cache hits are so cheap that **raising the threshold could improve context retention without hurting cost** — but the user has explicitly tuned down for aggressive compression, so this plan respects that choice.
+
+This finding is informational. No code change required. If the user later wants to raise `maxContextLimit` for better context retention (especially on V4.1 Flash where cache-hit cost is essentially free), the existing knob is sufficient. Per-model limits (`compress.modelMaxLimits` / `compress.modelMinLimits`) remain available if a finer control is needed for some specific model.
+
+### Finding 6 (new) — OpenCode's `cache_control` emission is route-dependent
+
+OpenCode emits Anthropic-style `cache_control: { type: "ephemeral" }` markers **only** when the model route uses `@ai-sdk/anthropic` or model IDs containing `anthropic`/`claude`. The `applyCaching()` gate is at `packages/opencode/src/provider/transform.ts:471-484` in the OpenCode source.
+
+| Route | SDK used | cache_control emitted? | DCP's MiniMax recommendations |
+|---|---|---|---|
+| `opencode-go/minimax-m3` (Go subscription) | `@ai-sdk/anthropic` | **YES** — 2-3 ephemeral breakpoints, ~5-min TTL, no `prompt_cache_key` | All apply |
+| `opencode/minimax-m3` (Zen) | `@ai-sdk/openai-compatible` | **NO** — implicit prefix caching only | MOOT — no markers to align with |
+| **`MiniMax (minimax.io)` default** (this user) | `@ai-sdk/anthropic` | **YES** — verified | **All apply** |
+| `MiniMax (minimax.cn)` / `MiniMax Token Plan (minimax.io)` | `@ai-sdk/anthropic` | **YES** | All apply (note: #31755 regression on Token Plan thinking toggle) |
+| Custom provider, `npm: "@ai-sdk/openai-compatible"` | `@ai-sdk/openai-compatible` | NO | MOOT |
+
+The user uses `MiniMax (minimax.io)`, resolved via OpenCode's bundled models.dev catalog (not in `BUNDLED_PROVIDERS`). All three MiniMax provider variants in models.dev use `@ai-sdk/anthropic`. Verified that `applyCaching()` fires for this route. **All MiniMax-side recommendations in this plan apply.**
+
+This finding was discovered late in the planning process (Q2 follow-up after the deep architect session) and was not in the architect's original report. The architect flagged the check as manual but did not perform it.
+
+### Finding 7 (new) — Two-tier pruning protection; `todowrite` belongs in tier 1
+
+There are **two tiers** of prune protection today:
+
+1. **Write-side gates (config, existing)**: `strategies.deduplication.protectedTools`, `strategies.purgeErrors.protectedTools`, `commands.protectedTools` — each prevents its own writer from marking a callID into `state.prune.tools`.
+2. **Read-side strip (hardcoded, unconditional)**: `dropUnsupportedPruneToolIds` (`lib/messages/prune.ts:38-45`) — runs on every transform fire, deletes `{question, edit, write}` callIDs from the map before any replacement.
+
+Tier 1 is **not airtight**. Two writers consult no protection list: `applyCompressionState` defensive propagation (`lib/compress/state.ts:274-280`) and `syncPruneToolsFromActiveBlocks` (`lib/state/utils.ts:483,493`). A tool in `protectedTools` can still be marked through those paths.
+
+Per-tool verdicts (user's hypothesis partially refuted):
+
+| Tool | Prune-protect? | Compress-protect? | Reasoning |
+|---|---|---|---|
+| `read` | **NO** | No (plan files covered by `protectedFilePatterns`) | File on disk = recoverable. Re-read is one cheap tool call. Old reads become stale the moment the file changes — retaining stale bytes is a real correctness hazard. Protecting removes DCP's biggest token-savings surface. `turnProtection.turns: 8` already keeps the working set verbatim. False-positive risk > false-negative risk. |
+| `todowrite` | **YES** | No | Small output (hundreds of tokens), live plan state, recoverable via `todoread` but the friction derails long sessions. Cheap insurance. |
+| `context7_*` | No | No | Large outputs, deterministic re-query. |
+| `brave-search_*` | No | No | Same. |
+| `webfetch` | No | No | Same. |
+| `task` (subagent) | Yes (already in user's lists) | **NO** | Appending full subagent transcripts into summaries inflates `summaryTokens` against the `maxCompactionRatio: 0.7` guard → more non-compacting runs → `recoveryForced` churn. Current split (protected from strategies/sweep, not appended into summaries) is the right balance. |
+
+**Asymmetry argument for `read`:** pruning an old `read` is *more correct* than keeping it, because the file may have changed. The placeholder tells the model to re-read and get fresh bytes; keeping stale bytes is a false-positive reliability hazard. Compare to `question` (unrecoverable user interaction) and `edit`/`write` (mutation receipts — the confirmation IS the record). `read` belongs to the recoverable-by-requery class.
+
+**Implementation options:**
+- **Option 1 (config-only, do today):** add `todowrite` to all three `protectedTools` lists. Covers all three marking paths in normal operation. Residual hole: two unprotected writers (rare edge paths).
+- **Option 2 (airtight, ~15-line diff, future-proofing):** add `unprunableTools: string[]` config (top-level, default `[]`, replace-semantics) that extends `dropUnsupportedPruneToolIds`. Catches all writers including compress propagation. Worth doing only if the rare-edge holes ever bite in practice.
+
+**Incidental findings (not this change):**
+- `pruneToolInputs` (`lib/messages/prune.ts:119-146`) is effectively dead code: the pre-strip removes `question` callIDs before it runs, and it only handles `question`. Either wire differently or delete — future cleanup round.
+- The write-side/read-side protection asymmetry (compress propagation consults no list) is undocumented — one line for `07-docs-maintainer` in `docs/features/PRUNING.md`.
 
 ---
 
 ## 4. Implementation plan
 
-Sequenced. Each item lists the file, the change, the rationale, and verification. Items 1–4 are zero or near-zero code; do them today.
+Sequenced. Each item lists the file, the change, the rationale, and verification. Items 1–3 are zero or near-zero code; do them today.
 
-### Item 1 — `dcp.jsonc`: per-model limits for DeepSeek (zero code)
-
-**File:** `C:\Users\marco\.config\opencode\dcp.jsonc`
-**Where:** inside the `compress` block, add `modelMaxLimits` and `modelMinLimits` entries for DeepSeek models.
-
-```jsonc
-"compress": {
-  // ... existing fields ...
-  "modelMaxLimits": {
-    "deepseek*": 110000,        // V3.x 128K window with safety margin
-    "deepseek-reasoner*": 110000,
-    "deepseek-chat*": 110000
-  },
-  "modelMinLimits": {
-    "deepseek*": 70000,
-    "deepseek-reasoner*": 70000,
-    "deepseek-chat*": 70000
-  }
-}
-```
-
-**Verify exact model IDs first.** Run `npm run dcp` from the DCP plugin repo to see resolved model IDs in the user's actual rotation. If `kimi-for-coding` is also in active rotation, add entries for it. Pattern matching uses glob.
-
-**Rationale:** restores the context-limit safety net on DeepSeek where the global `maxContextLimit: 250000` silently exceeds the model's window.
-
-**Cache effect:** triggers compression *inside* the window where it beats OpenCode compaction on both tokens and cache. Avoids total cache wipe on DeepSeek sessions.
-
-### Item 2 — `dcp.jsonc`: `turnProtection.turns: 8` (zero code)
+### Item 1 — `dcp.jsonc`: `turnProtection.turns: 8` (zero code)
 
 **File:** `C:\Users\marco\.config\opencode\dcp.jsonc`
 **Where:** top-level `turnProtection` block.
@@ -214,7 +241,7 @@ Sequenced. Each item lists the file, the change, the rationale, and verification
 **Cache effect:** fewer, batched mutation events.
 **Cost:** slightly higher per-call tokens for ~4 extra turns (at 0.1× cache-read pricing, cheap).
 
-### Item 3 — `dcp.jsonc`: `strategies.purgeErrors.turns: 4` (zero code)
+### Item 2 — `dcp.jsonc`: `strategies.purgeErrors.turns: 4` (zero code)
 
 **File:** `C:\Users\marco\.config\opencode\dcp.jsonc`
 **Where:** `strategies.purgeErrors` block.
@@ -224,12 +251,39 @@ Sequenced. Each item lists the file, the change, the rationale, and verification
   "purgeErrors": {
     "enabled": true,
     "turns": 4,      // was 3
-    "protectedTools": ["task"]
+    "protectedTools": ["task", "todowrite"]  //   // was ["task"]
   }
 }
 ```
 
-**Rationale:** aligns error-purge cadence with the widened `turnProtection.turns: 8` so the two work together.
+**Rationale:** aligns error-purge cadence with the widened `turnProtection.turns: 8` so the two work together. Also adds `todowrite` protection (see Finding 7).
+
+### Item 3 — `dcp.jsonc`: add `todowrite` to all three `protectedTools` lists (zero code)
+
+**File:** `C:\Users\marco\.config\opencode\dcp.jsonc`
+**Where:** three places.
+
+```jsonc
+"commands": {
+  "enabled": true,
+  "protectedTools": ["task", "todowrite"]   // was ["task"]
+},
+"strategies": {
+  "deduplication": {
+    "enabled": true,
+    "protectedTools": ["task", "todowrite"]  // was ["task"]
+  },
+  "purgeErrors": {
+    "enabled": true,
+    "turns": 4,
+    "protectedTools": ["task", "todowrite"]  // was ["task"]
+  }
+}
+```
+
+**Rationale:** protects the agent's live plan state from prune-replacement. Cheap insurance; small output. See Finding 7.
+
+**Note:** `read` is INTENTIONALLY NOT in this list. See Finding 7 reasoning: pruning old `read` outputs is more correct than keeping them (stale bytes are a correctness hazard; re-read is one cheap tool call). `turnProtection.turns: 8` keeps the working set verbatim; plan-file reads are protected by `protectedFilePatterns`.
 
 ### Item 4 — `dcp.jsonc`: remove `forkSchemaVersion` (zero code, optional)
 
@@ -302,11 +356,11 @@ Sequenced. Each item lists the file, the change, the rationale, and verification
 }
 ```
 
-**Rationale:** cache-neutral (summary bytes change on compression anyway). Appending the last 2 real user messages verbatim to compression summaries materially improves summary fidelity for long planning sessions. Range-mode only (INV-21 in `docs/features/COMPRESSION.md`).
+**Rationale:** cache-neutral (summary bytes change on compression anyway). Appending the last 2 real user messages verbatim to compression summaries materially improves summary fidelity for long planning sessions. Range-mode only (INV-21 in `docs/features/COMPRESSION.md`). On DeepSeek v4.1 Flash, where cache-hit cost is essentially free, the slight summary-size increase is barely noticeable.
 
-**Risk:** slightly larger summaries. The user's stripPatterns (4 patterns) do not affect this — stripPatterns only filters synthetic-shaped blocks inside non-synthetic user messages, not whole messages.
+**Risk:** slightly larger summaries.
 
-**Suggested:** evaluate after 1–2 weeks of metrics. Roll back if summary size noticeably hurts context budget.
+**User feedback:** Do not enable \`protectUserMessages\`. Keep it set to false.
 
 ### Item 7 — Source code: `forkSchemaVersion` default drift hygiene
 
@@ -378,14 +432,16 @@ cd C:\Beheer\OpenCode\opencode_plugins\opencode-dynamic-context-pruning-fork
 npm run dcp
 ```
 Confirm:
-- Resolved per-model limits appear for DeepSeek model IDs
 - `protectedFilePatternsTools` defaults to `["read", "write", "edit", "apply_patch", "multiedit"]`
 - After user sets the new key to `["read"]`, the resolved config reflects it
+- The active DeepSeek model ID is `deepseek-flash` (not the retired `deepseek-chat` / `deepseek-reasoner` aliases)
+- `turnProtection.turns` resolved to `8` after config change
 
 ### 5.4 Cache hit rate observation
 1. **MiniMax session with `debug: true`:** watch `cache_creation_input_tokens` vs `cache_read_input_tokens` in provider responses (if OpenCode surfaces usage). Confirms (a) `cache_control` breakpoints are actually emitted, (b) hit rate before/after `turns: 8`.
-2. **DeepSeek session:** watch `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`. Baseline one long session before changes, then re-measure after.
+2. **DeepSeek v4.1 Flash session:** watch `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`. Baseline one long session before changes, then re-measure after. With 72h TTL and $0.003/M cache-hit pricing, expect substantially higher hit rates than the V3.x envelope.
 3. **Idle test (MiniMax):** pause 6 minutes mid-session. Next call should show full `cache_creation` (validates the 5-min TTL claim; if not observed, MiniMax TTL is longer than documented).
+4. **Long-session test (DeepSeek v4.1 Flash):** a session that exceeds 250000 tokens (the user's current `maxContextLimit`). With the 1M context window and 72h TTL, confirm that compression triggers *before* any provider-side context rejection. This validates the current `maxContextLimit: 250000` is conservative and well-placed.
 
 ### 5.5 Metrics to track
 - Cache hit rate per provider (target: MiniMax ≥85% active-session, DeepSeek ≥90%)
@@ -401,22 +457,24 @@ Confirm:
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| `turnProtection.turns: 8` makes compression cluster right after the protection window slides | Low | Unwanted cache misses | Widen the gap between `minContextLimit` and per-model max instead of reverting `turns` |
-| Per-model DeepSeek limits use wrong model-ID pattern | Medium | No effect → silent gap | Run `npm run dcp` to verify resolved model IDs; test with actual DeepSeek session |
+| `turnProtection.turns: 8` makes compression cluster right after the protection window slides | Low | Unwanted cache misses | Widen the gap between `minContextLimit` and `maxContextLimit` instead of reverting `turns` |
 | `protectedFilePatternsTools: []` accidentally set | Low | All file-pattern protection lost (rare in practice) | Replace-semantics; user has to opt in; covered by test |
 | Skills plugin changes injection format (drops `synthetic: true`) | Low | Skill messages become compressible → silent loss | Regression test (Item 8) is the tripwire |
 | MiniMax `cache_control` breakpoints not actually emitted by OpenCode | Medium | All MiniMax tuning moot | Manual verification step 5.4-1 confirms |
+| DeepSeek v4.1 Flash silently downgraded to V3.x due to model ID mismatch | Low | Cache pricing/capability reverts to V3.x | Verify `deepseek-flash` model ID is in active rotation via `npm run dcp` |
 
 ### 6.2 Open questions
 
-1. **Is `kimi-for-coding` provider actively used?** If yes, it needs its own `modelMaxLimits`/`modelMinLimits` entries (same class of bug as DeepSeek). Verify via `npm run dcp` and check the user's recent sessions.
-2. **Should `protectUserMessages` be enabled by default for the fork?** Current default is `false`. The recommendation is opt-in for the user, but it might be worth a discussion for the fork default. Out of scope for this plan.
-3. **Should the fork add a `protectedSkills` config anyway, as defense-in-depth for future plugin changes?** The architect's verdict was "no" — building it duplicates content into summaries, which is a net negative. But if the skills plugin's format ever changes (drops `synthetic: true`), the regression test (Item 8) is the tripwire and adding a config becomes a fast follow-up.
+1. **Should the fork add a `protectedSkills` config anyway, as defense-in-depth for future plugin changes?** The architect's verdict was "no" — building it duplicates content into summaries, which is a net negative. But if the skills plugin's format ever changes (drops `synthetic: true`), the regression test (Item 8) is the tripwire and adding a config becomes a fast follow-up.
+
+2. **Should `read` tool be added to the hardcoded read-side strip (`dropUnsupportedPruneToolIds`)?** The architect's verdict (Q1 follow-up): NO. Pruning old `read` outputs is more correct than keeping them (stale bytes are a correctness hazard). The config-level `protectedTools` lists also don't include `read` (Item 3 is intentionally `todowrite` only). If the user's empirical experience contradicts this — e.g., agents get confused without verbatim old reads — revisit the recommendation. But the working set is protected by `turnProtection.turns: 8` + plan file `protectedFilePatterns`, so what's pruned is precisely the old/stale bulk.
+
+3. **Option 2 (`unprunableTools` config) for airtight read-side protection?** Only worth doing if the two-tier protection holes (compress propagation, block rebuild) ever bite in practice. The architect's Option 1 (config-only `protectedTools`) covers 99% of cases. Keep this as a backlog item.
 
 ### 6.3 Unfixable by DCP (state honestly)
 
 - **MiniMax 5-minute TTL on idle gaps.** Any pause >5 minutes evicts everything. Mitigation is behavioral: keep sessions warm, or accept the rewrite.
-- **OpenCode's own compaction events** (`compaction.prune: true`). Total prefix wipe. With per-model DeepSeek limits in place, DCP fires before OpenCode compaction; OpenCode is a backstop, not the primary compression driver.
+- **OpenCode's own compaction events** (`compaction.prune: true`). Total prefix wipe. With the user's `maxContextLimit: 250000` (well within the 1M context window of both providers), DCP fires before OpenCode compaction in the normal path; OpenCode is a backstop, not the primary compression driver.
 - **Mid-session tool list changes by other plugins.** Anthropic's own guidance: never add/remove tools mid-session. The tools→system→messages cascade on MiniMax means any tool mutation is a full prefix rewrite.
 
 ---
@@ -474,10 +532,24 @@ Confirm:
 - `docs/DESIGN_PRINCIPLES.md:25` — `forkSchemaVersion = 3` (incorrect)
 
 ### 7.3 Provider docs referenced
-- MiniMax: `https://platform.minimax.io/docs/api-reference/anthropic-api-compatible-cache`
-- Anthropic reference: `https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching`
-- DeepSeek: `https://api-docs.deepseek.com/guides/kv_cache/`, `https://api-docs.deepseek.com/news/news0802/`
-- DeepSeek release timeline: `https://api-docs.deepseek.com/news/`
+- OpenCode source (current dev): `packages/opencode/src/provider/transform.ts:471-484` (`applyCaching()` gate)
+- OpenCode source: `packages/opencode/src/provider/provider.ts:113-140` (`BUNDLED_PROVIDERS`), `142+` (`custom()` loader)
+- OpenCode Zen docs: https://opencode.ai/docs/zen/ (MiniMax M3/M2.7/M2.5 → `@ai-sdk/openai-compatible`, no cache_control)
+- OpenCode Go docs: https://opencode.ai/docs/go/ (MiniMax M3/M2.7/M2.5 → `@ai-sdk/anthropic`, cache_control emitted)
+- OpenCode issue #45750: custom anthropic-protocol proxies may report 0 cache hits despite markers sent
+- OpenCode issue #48246: family gate is intentional (not a bug)
+- OpenCode issue #14642: placement detection fix (closed)
+- OpenCode issue #24906: Zen MiniMax M2.5 Free Anthropic key error (historical)
+- OpenCode issue #31755: MiniMax Token Plan caching regression with thinking toggle (open)
+- models.dev MiniMax provider registry: https://models.dev/providers/minimax (three variants: `minimax`, `minimax-cn`, `minimax-coding-plan`, all `@ai-sdk/anthropic`)
+- MiniMax OpenCode onboarding: https://platform.minimax.io/docs/api-reference/anthropic-api-compatible-cache
+- Anthropic reference: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+- DeepSeek v4.1 Flash (1M context, 72h TTL, $0.003/M cache hit):
+  - https://api-docs.deepseek.com/guides/kv_cache/ (caching mechanics)
+  - https://api-docs.deepseek.com/news/ (release timeline; V4.1 Flash GA 2026-09-10)
+  - DeepSeek V4.x technical report (72h TTL guarantee)
+- DeepSeek V3.x references (historical; V3.x aliases retired 2026-07-24):
+  - https://api-docs.deepseek.com/news/news0802/ (original disk-caching launch 2026-08-02)
 
 ### 7.4 Custom skills plugin paths referenced
 - `C:\Beheer\OpenCode\opencode_plugins\opencode-agent-skills\src\plugin.ts` — entry point, hook handlers, tool registration
@@ -496,8 +568,8 @@ Confirm:
 
 | Order | Item | Type | Rationale |
 |---|---|---|---|
-| 1 | `dcp.jsonc`: per-model DeepSeek limits, remove `forkSchemaVersion`, `turnProtection.turns: 8`, `strategies.purgeErrors.turns: 4` | Config only | Zero code, fixes a live bug, immediately measurable. Do today. |
-| 2 | Verify MiniMax `cache_control` emission + TTL behavior (Section 5.4) | Verification | If breakpoints aren't emitted, all MiniMax tuning is moot. Know this before anything else. |
+| 1 | `dcp.jsonc`: `turnProtection.turns: 8`, `strategies.purgeErrors.turns: 4`, **add `todowrite` to all three `protectedTools` lists**, remove `forkSchemaVersion` | Config only | Zero code, immediately measurable. Do today. Item 1 of config-only batch. |
+| 2 | Verify MiniMax route via `npm run dcp` or `jq '.minimax.npm' ~/.cache/opencode/models.json` (already verified this session, but worth confirming on the actual machine) | Verification | Confirms cache_control is on. Already done in this session. |
 | 3 | Item 5: `protectedFilePatternsTools` (top-level) | Code | Then optionally set `["read"]` in config. Independent of 1–2. |
 | 4 | Item 7: `forkSchemaVersion` default hygiene | Code (trivial) | Unblocks config/schema/docs consistency; no behavior change. |
 | 5 | Item 8: synthetic-skill-message invariant test | Test only | Pins Finding 1 as a regression tripwire. |
