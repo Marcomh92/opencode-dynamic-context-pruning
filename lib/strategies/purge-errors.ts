@@ -2,11 +2,7 @@ import { PluginConfig } from "../config"
 import { Logger } from "../logger"
 import type { SessionState, WithParts } from "../state"
 import { isMessageCompacted } from "../state/utils"
-import {
-    getFilePathsFromParameters,
-    isFilePathProtected,
-    isToolNameProtected,
-} from "../protected-patterns"
+import { isProtectedByFilePatterns, isToolNameProtected } from "../protected-patterns"
 
 /** Build the set of candidate tool IDs from the freshly fetched messages,
  *  ignoring any stale `state.toolIdList` from earlier transform fires.
@@ -91,8 +87,14 @@ export const purgeErrors = (
             continue
         }
 
-        const filePaths = getFilePathsFromParameters(metadata.tool, metadata.parameters)
-        if (isFilePathProtected(filePaths, config.protectedFilePatterns)) {
+        if (
+            isProtectedByFilePatterns(
+                metadata.tool,
+                metadata.parameters,
+                config.protectedFilePatterns,
+                config.protectedFilePatternsTools,
+            )
+        ) {
             continue
         }
 

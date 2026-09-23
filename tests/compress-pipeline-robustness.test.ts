@@ -39,6 +39,7 @@ function buildConfig(): PluginConfig {
         turnProtection: { enabled: false, turns: 4 },
         experimental: { allowSubAgents: true, customPrompts: false },
         protectedFilePatterns: [],
+        protectedFilePatternsTools: ["read", "write", "edit", "apply_patch", "multiedit"],
         compress: {
             mode: "range",
             permission: "allow",

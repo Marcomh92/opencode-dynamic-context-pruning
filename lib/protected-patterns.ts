@@ -105,6 +105,22 @@ export function isFilePathProtected(filePaths: string[], patterns: string[]): bo
     return filePaths.some((path) => patterns.some((pattern) => matchesGlob(path, pattern)))
 }
 
+// ponytail: one guard, replaces 5 inline `getFilePathsFromParameters` + `isFilePathProtected`
+// call sites (deduplication.ts, purge-errors.ts, sweep.ts ×2, protected-content.ts). Tool
+// allowlist is the new opt-out: when the user's `protectedFilePatternsTools: []`, no tool
+// is in scope and the file-pattern check returns false even on a path match. Widen the
+// `tool` set here if a new file-path tool appears — `getFilePathsFromParameters` already
+// special-cases apply_patch/multiedit, so the default list covers them.
+export function isProtectedByFilePatterns(
+    tool: string,
+    parameters: unknown,
+    protectedFilePatterns: string[],
+    protectedFilePatternsTools: string[],
+): boolean {
+    if (!protectedFilePatternsTools.includes(tool)) return false
+    return isFilePathProtected(getFilePathsFromParameters(tool, parameters), protectedFilePatterns)
+}
+
 const GLOB_CHARS = /[*?]/
 
 export function isToolNameProtected(toolName: string, patterns: string[]): boolean {

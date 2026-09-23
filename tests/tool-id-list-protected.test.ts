@@ -84,6 +84,7 @@ function buildConfig(protectedTools: string[] = []) {
         turnProtection: { enabled: false, turns: 4 },
         experimental: { allowSubAgents: false, customPrompts: false },
         protectedFilePatterns: [],
+        protectedFilePatternsTools: ["read", "write", "edit", "apply_patch", "multiedit"],
         compress: {
             mode: "range",
             permission: "allow",

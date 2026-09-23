@@ -125,6 +125,7 @@ export function createCompressMessageTool(ctx: ToolContext): ReturnType<typeof t
                     searchContext,
                     ctx.config.compress.protectedTools,
                     ctx.config.protectedFilePatterns,
+                    ctx.config.protectedFilePatternsTools,
                 )
 
                 preparedPlans.push({

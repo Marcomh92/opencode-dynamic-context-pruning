@@ -75,7 +75,7 @@ Five new `compress.*` keys added to `dcp.jsonc` schema (all optional, all have s
 - `compress.maxCompactionRatio` (number 0<x≤1, default 0.7) — refuse compress commits where summary tokens ≥ removed tokens × this ratio.
 - `compress.maxContextLimitRecovery` (number ≥1, default 3) — consecutive non-compacting compresses before auto-disabling autonomous compress via `recoveryForced`.
 - `compress.recoveryFadeWindow` (number ≥1, default 5) — consecutive good manual compresses required to clear `recoveryForced`.
-- `compress.forkSchemaVersion` (number, default 3) — persisted state shape version. Mismatched state is dropped on load.
+- `compress.forkSchemaVersion` (number, default 4) — persisted state shape version. Mismatched state is dropped on load.
 - `compress.stateMaxAgeDays` (number | null, default null) — optional paranoia wall-clock window for state invalidation. `null` = no expiry across versions.
 
 New `recoveryForced` flag in `/dcp stats` output surfaces when autonomous compress was auto-disabled (between "Compression" and "All-time" sections).
@@ -117,7 +117,7 @@ userForced             // user via /dcp-compress
 recoveryForced         // auto-disabled after maxContextLimitRecovery non-compacting runs
 nonCompactingRunCount  // current streak toward recoveryForced
 recoveryFadeCounter    // good-manual streak toward clearing recoveryForced
-forkSchemaVersion      // 3 (mismatch = drop)
+forkSchemaVersion      // 4 (mismatch = drop)
 prune.tools            // Record<toolCallId, runId>
 prune.messages.blocksById
 prune.messages.activeBlockIds []

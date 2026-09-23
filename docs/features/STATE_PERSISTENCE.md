@@ -8,9 +8,9 @@ Persisted session state, the storage path, the schema gate, and the age gate. Th
 
 ## Schema gate
 
-`FORK_SCHEMA_VERSION = 3` in `lib/state/types.ts`. `loadSessionState` drops files whose `forkSchemaVersion` does not match (including `undefined`) and returns `null`. There is no migration path (`DPP-004`).
+`FORK_SCHEMA_VERSION = 4` in `lib/state/types.ts`. `loadSessionState` drops files whose `forkSchemaVersion` does not match (including `undefined`) and returns `null`. There is no migration path (`DPP-004`).
 
-The v3 bump is defensive: the `subAgentResultCache` value type changed from `string` to `CachedSubAgentResult`. The cache is not persisted, so on-disk shape has not actually changed; the bump is documentation of the runtime invariant.
+The v4 bump (BUG-089) is additive: `CompressionBlock` gains 6 timestamp fields (`startTime`, `endTime`, `effectiveTimeMs`, `directTimeMs`, `anchorTime`, `compressTime`); `SessionState` gains `sessionTitle` and `inheritedFrom` (both in-memory); `PersistedSessionState` gains `recoveryForced`, `nonCompactingRunCount`, `recoveryFadeCounter` so fork inheritance can copy them per `BUG-089 plan §4.5`. Pre-v4 files are dropped on load (logged, not migrated).
 
 ## Age gate
 

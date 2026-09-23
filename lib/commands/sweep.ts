@@ -17,11 +17,7 @@ import { isIgnoredUserMessage } from "../messages/query"
 import { buildToolIdList } from "../messages/utils"
 import { saveSessionState } from "../state/persistence"
 import { isMessageCompacted } from "../state/utils"
-import {
-    getFilePathsFromParameters,
-    isFilePathProtected,
-    isToolNameProtected,
-} from "../protected-patterns"
+import { isProtectedByFilePatterns, isToolNameProtected } from "../protected-patterns"
 import { syncToolCache } from "../state/tool-cache"
 import { flushPruneStats } from "../state/utils"
 
@@ -196,9 +192,15 @@ export async function handleSweepCommand(ctx: SweepCommandContext): Promise<void
             logger.debug(`Sweep: skipping protected tool ${entry.tool} (${id})`)
             return false
         }
-        const filePaths = getFilePathsFromParameters(entry.tool, entry.parameters)
-        if (isFilePathProtected(filePaths, config.protectedFilePatterns)) {
-            logger.debug(`Sweep: skipping protected file path(s) ${filePaths.join(", ")} (${id})`)
+        if (
+            isProtectedByFilePatterns(
+                entry.tool,
+                entry.parameters,
+                config.protectedFilePatterns,
+                config.protectedFilePatternsTools,
+            )
+        ) {
+            logger.debug(`Sweep: skipping protected file path(s) for ${entry.tool} (${id})`)
             return false
         }
         return true
@@ -213,8 +215,14 @@ export async function handleSweepCommand(ctx: SweepCommandContext): Promise<void
         if (isToolNameProtected(entry.tool, protectedTools)) {
             return true
         }
-        const filePaths = getFilePathsFromParameters(entry.tool, entry.parameters)
-        if (isFilePathProtected(filePaths, config.protectedFilePatterns)) {
+        if (
+            isProtectedByFilePatterns(
+                entry.tool,
+                entry.parameters,
+                config.protectedFilePatterns,
+                config.protectedFilePatternsTools,
+            )
+        ) {
             return true
         }
         return false

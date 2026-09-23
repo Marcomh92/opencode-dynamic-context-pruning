@@ -63,7 +63,7 @@ The `manualMode === "compress-pending"` flag is written only by the slash-comman
 
 ## PAT-008 — Schema-version gate on persistence
 
-`FORK_SCHEMA_VERSION = 3` in `lib/state/types.ts`. Any persisted state with a mismatched or missing `forkSchemaVersion` is dropped on load.
+`FORK_SCHEMA_VERSION = 4` in `lib/state/types.ts`. Any persisted state with a mismatched or missing `forkSchemaVersion` is dropped on load.
 
 **Why.** Migration code is a liability. A clean drop is honest about the boundary. Bump the version when the on-disk shape changes; the comment block names the prior bump's reason.
 

@@ -378,6 +378,7 @@ test("BUG-047: sweep honors turnProtection.turns and skips turn-protected tools"
         turnProtection: { enabled: true, turns: 3 },
         experimental: { allowSubAgents: false, customPrompts: false },
         protectedFilePatterns: [],
+        protectedFilePatternsTools: ["read", "write", "edit", "apply_patch", "multiedit"],
         compress: {
             mode: "range",
             permission: "allow",

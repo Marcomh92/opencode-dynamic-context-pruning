@@ -134,6 +134,14 @@
             "default": [],
             "description": "Glob patterns for files that should be protected from pruning (e.g., '**/*.config.ts')"
         },
+        "protectedFilePatternsTools": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": ["read", "write", "edit", "apply_patch", "multiedit"],
+            "description": "Top-level tool allowlist for `protectedFilePatterns`. Only tools in this list are checked against file patterns. Replace-semantics: `[]` means NO tool is protected by file patterns. Default covers the file-path tools that `getFilePathsFromParameters` understands (PLAN §cache-strategy / Item 5)."
+        },
         "compress": {
             "type": "object",
             "description": "Configuration for the unified compress tool",
@@ -289,8 +297,8 @@
                 },
                 "forkSchemaVersion": {
                     "type": "number",
-                    "default": 3,
-                    "description": "Persisted-state shape version. Bumped on any change to PersistedSessionState (v3 = #595 subagent cache shape). On load, mismatched state is dropped and a startup log line names the dropped version. See PLAN §6.3."
+                    "default": 4,
+                    "description": "Persisted-state shape version. Bumped on any change to PersistedSessionState (v4 = BUG-089 fork-state-inheritance adds 6 timestamp fields + sessionTitle + inheritedFrom + recovery* counter round-trip). Matches the `FORK_SCHEMA_VERSION` constant in `lib/state/types.ts`. On load, mismatched state is dropped and a startup log line names the dropped version. See PLAN §6.3."
                 },
                 "stateMaxAgeDays": {
                     "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }],
@@ -321,7 +329,7 @@
                 "maxCompactionRatio": 0.7,
                 "maxContextLimitRecovery": 3,
                 "recoveryFadeWindow": 5,
-                "forkSchemaVersion": 3,
+                "forkSchemaVersion": 4,
                 "stateMaxAgeDays": null,
                 "stateRetentionDays": 7
             }

@@ -163,6 +163,7 @@ export function createCompressRangeTool(ctx: ToolContext): ReturnType<typeof too
                     searchContext,
                     ctx.config.compress.protectedTools,
                     ctx.config.protectedFilePatterns,
+                    ctx.config.protectedFilePatternsTools,
                 )
 
                 const completedSummary = appendMissingBlockSummaries(

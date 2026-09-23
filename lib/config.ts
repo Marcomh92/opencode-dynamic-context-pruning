@@ -12,6 +12,7 @@ import { homedir } from "os"
 // upstream package ships a proper `exports` map with an ESM entry.
 import { parse } from "jsonc-parser"
 import type { PluginInput } from "@opencode-ai/plugin"
+import { FORK_SCHEMA_VERSION } from "./state/types"
 
 type Permission = "ask" | "allow" | "deny"
 type CompressMode = "range" | "message"
@@ -99,6 +100,7 @@ export interface PluginConfig {
     turnProtection: TurnProtection
     experimental: ExperimentalConfig
     protectedFilePatterns: string[]
+    protectedFilePatternsTools: string[]
     compress: CompressConfig
     strategies: {
         deduplication: Deduplication
@@ -133,6 +135,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "experimental.customPrompts",
     "experimental.inheritOnFork",
     "protectedFilePatterns",
+    "protectedFilePatternsTools",
     "commands",
     "commands.enabled",
     "commands.protectedTools",
@@ -274,6 +277,24 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
         } else if (!config.protectedFilePatterns.every((v: unknown) => typeof v === "string")) {
             errors.push({
                 key: "protectedFilePatterns",
+                expected: "string[]",
+                actual: "non-string entries",
+            })
+        }
+    }
+
+    if (config.protectedFilePatternsTools !== undefined) {
+        if (!Array.isArray(config.protectedFilePatternsTools)) {
+            errors.push({
+                key: "protectedFilePatternsTools",
+                expected: "string[]",
+                actual: typeof config.protectedFilePatternsTools,
+            })
+        } else if (
+            !config.protectedFilePatternsTools.every((v: unknown) => typeof v === "string")
+        ) {
+            errors.push({
+                key: "protectedFilePatternsTools",
                 expected: "string[]",
                 actual: "non-string entries",
             })
@@ -953,6 +974,7 @@ const defaultConfig: PluginConfig = {
         inheritOnFork: true,
     },
     protectedFilePatterns: [],
+    protectedFilePatternsTools: ["read", "write", "edit", "apply_patch", "multiedit"],
     compress: {
         mode: "range",
         permission: "allow",
@@ -974,7 +996,7 @@ const defaultConfig: PluginConfig = {
         maxCompactionRatio: 0.7,
         maxContextLimitRecovery: 3,
         recoveryFadeWindow: 5,
-        forkSchemaVersion: 3,
+        forkSchemaVersion: FORK_SCHEMA_VERSION,
         stateMaxAgeDays: null,
         // BUG-092 — default 7 days matches the bug spec. Loads older than
         // this are swept on save and skipped in the candidate scan. null
@@ -1266,6 +1288,7 @@ function deepCloneConfig(config: PluginConfig): PluginConfig {
         turnProtection: { ...config.turnProtection },
         experimental: { ...config.experimental },
         protectedFilePatterns: [...config.protectedFilePatterns],
+        protectedFilePatternsTools: [...config.protectedFilePatternsTools],
         compress: {
             ...config.compress,
             modelMaxLimits: { ...config.compress.modelMaxLimits },
@@ -1306,6 +1329,13 @@ function mergeLayer(config: PluginConfig, data: Record<string, any>): PluginConf
         protectedFilePatterns: [
             ...new Set([...config.protectedFilePatterns, ...(data.protectedFilePatterns ?? [])]),
         ],
+        // ponytail: replace-semantics (NOT additive like protectedFilePatterns above).
+        // The user's dcp.jsonc is the single source of truth — `protectedFilePatternsTools: []`
+        // must mean "no tool is in scope", not "merge with the default list". Allows users to
+        // fully opt out by setting `[]` without surprises. Pattern lists above compose by
+        // intent (glob OR-globs naturally), tool allowlists are discrete and replace cleanly.
+        protectedFilePatternsTools:
+            data.protectedFilePatternsTools ?? config.protectedFilePatternsTools,
         compress: mergeCompress(config.compress, data.compress as CompressOverride),
         // ponytail: same mergeLayer seam as the commands cast above — see header comment.
         strategies: mergeStrategies(config.strategies, data.strategies as any),

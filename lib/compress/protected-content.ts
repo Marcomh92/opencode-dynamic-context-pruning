@@ -1,11 +1,7 @@
 import type { SessionState } from "../state"
 import { isIgnoredUserMessage } from "../messages/query"
 import { stripText } from "../messages/strip-patterns"
-import {
-    getFilePathsFromParameters,
-    isFilePathProtected,
-    isToolNameProtected,
-} from "../protected-patterns"
+import { isProtectedByFilePatterns, isToolNameProtected } from "../protected-patterns"
 import { mergeSubagentResult } from "../subagents/subagent-results"
 import { buildSubAgentCacheKey } from "../subagents/cache-key"
 import type { SearchContext, SelectionResolution } from "./types"
@@ -144,6 +140,7 @@ export async function appendProtectedTools(
     searchContext: SearchContext,
     protectedTools: string[],
     protectedFilePatterns: string[] = [],
+    protectedFilePatternsTools: string[] = [],
 ): Promise<string> {
     const protectedOutputs: string[] = []
 
@@ -161,9 +158,15 @@ export async function appendProtectedTools(
             if (part.type === "tool" && part.callID) {
                 let isToolProtected = isToolNameProtected(part.tool, protectedTools)
 
-                if (!isToolProtected && protectedFilePatterns.length > 0) {
-                    const filePaths = getFilePathsFromParameters(part.tool, part.state?.input)
-                    if (isFilePathProtected(filePaths, protectedFilePatterns)) {
+                if (!isToolProtected) {
+                    if (
+                        isProtectedByFilePatterns(
+                            part.tool,
+                            part.state?.input,
+                            protectedFilePatterns,
+                            protectedFilePatternsTools,
+                        )
+                    ) {
                         isToolProtected = true
                     }
                 }

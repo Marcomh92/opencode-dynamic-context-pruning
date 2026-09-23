@@ -22,6 +22,7 @@ The plugin reads JSONC config from up to four sources and merges them in this or
 | `compress.protectedTools`                | Replace per layer. `[]` means nothing protected.                                                | An explicit `[]` is the user's choice; default-merge would surprise.  |
 | `compress.stripPatterns`                 | Replace per layer. `[]` means strip nothing.                                                    | Same rule as `protectedTools`: an explicit `[]` is the user's choice. |
 | `compress.protectedFilePatterns`         | Additive per layer.                                                                             | Pattern lists compose naturally; an empty list is harmless.           |
+| `protectedFilePatternsTools`             | Replace per layer. `[]` means no tool is in scope (file-pattern check is a no-op).              | Tool allowlists are discrete; the user opt-out must not be surprised. |
 | Other arrays (e.g. `commands.something`) | See `mergeCompress` / `mergeStrategies` / `mergeCommands` ponytail comments in `lib/config.ts`. | Per-key; the comments are the spec.                                   |
 
 The replace rule is the v2 fork's hard rule (`DPP-007`).
@@ -31,6 +32,30 @@ The replace rule is the v2 fork's hard rule (`DPP-007`).
 `compress.protectedFilePatterns` and the tool-name patterns inside `compress.protectedTools` are evaluated by the custom glob matcher in `lib/protected-patterns.ts`. The matcher is **case-sensitive on every platform** — the underlying regex does not use the `i` flag. To match case-insensitively, list the patterns explicitly (e.g. `["*.md", "*.MD"]` for both `.md` and `.MD` suffixes).
 
 Note: on case-insensitive filesystems (Windows, default macOS HFS+/APFS), the _file system_ folds case, but the matcher does not. A pattern like `README.md` matches the literal string `README.md`, not `readme.md`.
+
+## `protectedFilePatternsTools`
+
+Top-level config key. Restricts which tools `protectedFilePatterns` applies to. Default `["read", "write", "edit", "apply_patch", "multiedit"]` (`lib/config.ts:977`). Replace-semantics per layer (`lib/config.ts:1337-1338`): `[]` means no tool is in scope and the file-pattern check returns `false` even on a path match.
+
+| Key                          | Type       | Default                                                 | Source                                 |
+| ---------------------------- | ---------- | ------------------------------------------------------- | -------------------------------------- |
+| `protectedFilePatternsTools` | `string[]` | `["read", "write", "edit", "apply_patch", "multiedit"]` | `lib/config.ts:977`, `dcp.schema.json` |
+
+**Motivating use case.** Restrict file-pattern protection to read-only plan files (`["read"]`) without bloating summaries with verbatim `write` / `edit` outputs that happen to match the same path glob. The `apply_patch` and `multiedit` defaults exist because `getFilePathsFromParameters` (`lib/protected-patterns.ts:61-99`) special-cases those tools for parameter parsing.
+
+**Motivating opt-out.** Set `[]` to disable file-pattern protection entirely (e.g. when the user prefers DCP's token-savings over plan-file preservation).
+
+**Where it is consulted.** The single guard is `isProtectedByFilePatterns` (`lib/protected-patterns.ts:114-125`, ponytail comment at lines 108-113). Called from five sites:
+
+| Caller                                      | Surface                                        |
+| ------------------------------------------- | ---------------------------------------------- |
+| `lib/strategies/deduplication.ts:94-98`     | dedup strategy (compress pipeline only)        |
+| `lib/strategies/purge-errors.ts:93-97`      | purge-errors strategy (compress pipeline only) |
+| `lib/commands/sweep.ts:198-202`             | `/dcp sweep` (slash command, not compress)     |
+| `lib/commands/sweep.ts:219-223`             | `/dcp sweep` (secondary sweep path)            |
+| `lib/compress/protected-content.ts:165-169` | compress pipeline protected-content append     |
+
+Two of five sites are slash-command paths, not compress-scoped — a `compress.protectedFilePatternsTools` sibling would be a layering lie (`docs/IMPROVEMENT_PLAN_CACHE_STRATEGY.md` Finding 3). The key is top-level.
 
 ## Strip patterns (block-name vs literal substring)
 

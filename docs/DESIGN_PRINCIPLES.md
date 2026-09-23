@@ -22,7 +22,7 @@ The `compress` tool refetches raw session messages via `client.session.messages(
 
 ## DPP-004 — Persisted state is version-gated, not migrated
 
-`FORK_SCHEMA_VERSION = 3` in `lib/state/types.ts`. Files whose `forkSchemaVersion` does not match are dropped on load. There is no migration path.
+`FORK_SCHEMA_VERSION = 4` in `lib/state/types.ts`. Files whose `forkSchemaVersion` does not match are dropped on load. There is no migration path.
 
 **Rationale.** Migration code is dead code on a forward path and dangerous on a backward path. A clean drop is honest about the boundary.
 
