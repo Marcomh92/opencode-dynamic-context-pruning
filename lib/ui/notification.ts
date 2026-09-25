@@ -288,9 +288,10 @@ export async function sendCompressNotification(
 
     let message: string
     const compressionLabel = getCompressionLabel(entries)
+    const runId = entries[0]?.runId
+    const runMarker = runId !== undefined ? `#${runId} | ` : ""
     const summary = buildCompressionSummary(entries, state)
     const summaryTokens = entries.reduce((total, entry) => total + entry.summaryTokens, 0)
-    const summaryTokensStr = formatTokenCount(summaryTokens)
     const compressedTokens = entries.reduce((total, entry) => {
         const compressionBlock = state.prune.messages.blocksById.get(entry.blockId)
         if (!compressionBlock) {
@@ -303,6 +304,18 @@ export async function sendCompressNotification(
 
         return total + compressionBlock.compressedTokens
     }, 0)
+
+    // Cumulative across every active compression block in the session. Drives
+    // the "Compression total" detail line; the headline uses per-compression
+    // `compressedTokens` so a single compress never reads as a multi-hundred-K
+    // removal. (BUG-099; the cumulative half of the headline/per-compression split.)
+    let cumulativeCompressedTokens = 0
+    for (const blockId of state.prune.messages.activeBlockIds) {
+        const block = state.prune.messages.blocksById.get(blockId)
+        if (block?.active) {
+            cumulativeCompressedTokens += block.compressedTokens
+        }
+    }
 
     const newlyCompressedMessageIds: string[] = []
     const newlyCompressedToolIds: string[] = []
@@ -339,14 +352,14 @@ export async function sendCompressNotification(
               "(unknown topic)")
             : "(unknown topic)")
 
-    // Headline shows the per-compress delta (sum of compressedTokens across
-    // entries being notified). The previously-reported "totalGross" was the
-    // session-lifetime cumulative counter, which made a single compress that
-    // shaved 25K look like a -400K removal. Session total is shown on its
-    // own line, explicitly labeled. (M2.5c Fix 1)
+    // Headline shows the per-compress delta (this compress's removed + summary
+    // tokens) with a `#N` marker identifying which compress just ran. The
+    // summary token count is intentionally per-compression so a single compress
+    // never reads as a multi-hundred-K summary that spans every prior compress.
+    // Cumulative totals live on the detail line below. (M2.5c Fix 1; #N marker
+    // + per-compression summary: BUG-099.)
     const totalActiveSummaryTkns = getActiveSummaryTokenUsage(state)
-    const sessionTotalGross = state.stats.totalPruneTokens + state.stats.pruneTokenCounter
-    const notificationHeader = `▣ DCP | ${formatCompressionMetrics(compressedTokens, totalActiveSummaryTkns)}`
+    const notificationHeader = `▣ DCP | ${runMarker}${formatCompressionMetrics(compressedTokens, summaryTokens)}`
 
     if (config.pruneNotification === "minimal") {
         message = `${notificationHeader} — ${compressionLabel}`
@@ -366,7 +379,7 @@ export async function sendCompressNotification(
             50,
         )
         message += `\n\n${progressBar}`
-        message += `\n▣ ${compressionLabel} ${formatCompressionMetrics(compressedTokens, summaryTokens)}`
+        message += `\n▣ Compression total ${formatCompressionMetrics(cumulativeCompressedTokens, totalActiveSummaryTkns)}`
         message += `\n→ Topic: ${topic}`
         message += `\n→ Items: ${newlyCompressedMessageIds.length} messages`
         if (newlyCompressedToolIds.length > 0) {
@@ -374,9 +387,8 @@ export async function sendCompressNotification(
         } else {
             message += ` compressed`
         }
-        message += `\n→ Session total: ${formatTokenCount(sessionTotalGross, true)} removed`
         if (config.compress.showCompression) {
-            message += `\n→ Compression (~${summaryTokensStr}): ${summary}`
+            message += `\n→ Summary: ${summary}`
         }
     }
 
@@ -392,8 +404,8 @@ export async function sendCompressNotification(
             const truncatedSummary = truncateToastSummary(summary)
             if (truncatedSummary !== summary) {
                 toastMessage = toastMessage.replace(
-                    `\n→ Compression (~${summaryTokensStr}): ${summary}`,
-                    `\n→ Compression (~${summaryTokensStr}): ${truncatedSummary}`,
+                    `\n→ Summary: ${summary}`,
+                    `\n→ Summary: ${truncatedSummary}`,
                 )
             }
         }

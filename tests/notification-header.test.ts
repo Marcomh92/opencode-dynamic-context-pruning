@@ -104,9 +104,9 @@ test("sendCompressNotification uses the notified block delta in headline and det
 
     const text = await notify(state, 1, 7)
 
-    assert.match(text, /^▣ DCP \| -2\.5K removed, \+3 summary/m)
-    assert.match(text, /▣ Compression #7 -2\.5K removed, \+3 summary/)
-    assert.match(text, /→ Session total: 12\.3K removed/)
+    assert.match(text, /^▣ DCP \| #7 \| -2\.5K removed, \+3 summary/m)
+    assert.match(text, /▣ Compression total -2\.5K removed, \+3 summary/)
+    assert.doesNotMatch(text, /→ Session total:/)
     assert.doesNotMatch(text.split("\n")[0] ?? "", /12\.3K/)
 })
 
@@ -155,8 +155,8 @@ test("sendCompressNotification sums compressedTokens across multiple entries", a
         }
     }
 
-    assert.match(text.split("\n")[0] ?? "", /-4K removed/)
-    assert.match(text, /▣ Compression #5 -4K removed, \+6 summary/)
+    assert.equal(text.split("\n")[0] ?? "", "▣ DCP | #5 | -4K removed, +6 summary")
+    assert.match(text, /▣ Compression total -4K removed, \+6 summary/)
 })
 
 test("sendCompressNotification returns false without dispatching when notification is off", async () => {
@@ -201,6 +201,47 @@ test("sendCompressNotification returns false without dispatching when notificati
     }
 })
 
+test("sendCompressNotification omits the #N marker when runId is undefined", async () => {
+    const state = createSessionState()
+    state.prune.messages.blocksById.set(1, block(1, 1, 1_000))
+    state.prune.messages.activeBlockIds.add(1)
+    let text = ""
+    const client = {
+        session: {
+            prompt: async (request: any) => {
+                text = request.body.parts[0].text
+            },
+        },
+    }
+    const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Bun")
+    Object.defineProperty(globalThis, "Bun", {
+        value: {},
+        configurable: true,
+        writable: true,
+        enumerable: false,
+    })
+    try {
+        await sendCompressNotification(
+            client,
+            new Logger(false),
+            config(),
+            state,
+            "ses_no_runid",
+            [{ blockId: 1, runId: undefined as any, summary: "x", summaryTokens: 3 }],
+            undefined,
+            ["msg-1"],
+            {},
+        )
+    } finally {
+        if (previousDescriptor) {
+            Object.defineProperty(globalThis, "Bun", previousDescriptor)
+        } else {
+            delete (globalThis as any).Bun
+        }
+    }
+    assert.match(text.split("\n")[0] ?? "", /^▣ DCP \| -1K removed, \+3 summary$/)
+})
+
 test("sendCompressNotification reports different deltas for consecutive compresses", async () => {
     const state = createSessionState()
     state.stats.totalPruneTokens = 20_000
@@ -215,13 +256,13 @@ test("sendCompressNotification reports different deltas for consecutive compress
 
     const firstHeadline = first.split("\n")[0]
     const secondHeadline = second.split("\n")[0]
-    assert.equal(firstHeadline, "▣ DCP | -1.2K removed, +3 summary")
-    assert.equal(secondHeadline, "▣ DCP | -7.8K removed, +6 summary")
+    assert.equal(firstHeadline, "▣ DCP | #1 | -1.2K removed, +3 summary")
+    assert.equal(secondHeadline, "▣ DCP | #2 | -7.8K removed, +3 summary")
     assert.notEqual(firstHeadline, secondHeadline)
-    assert.match(second, /▣ Compression #2 -7\.8K removed, \+3 summary/)
-    assert.match(second, /→ Session total: 27\.8K removed/)
+    assert.match(second, /▣ Compression total -9K removed, \+6 summary/)
+    assert.doesNotMatch(second, /→ Session total:/)
 })
-// Logic Verified: sendCompressNotification uses the block delta in headline and detail, sums compressedTokens across entries, returns false when off, and reports different deltas for consecutive compresses.
-// Bugs Documented: none.
+// Logic Verified: sendCompressNotification uses the per-compression delta in the `#N |`-prefixed headline and cumulative totals in the `Compression total` detail line, sums compressedTokens across entries, returns false when off, reports different deltas for consecutive compresses, and omits the `#N` marker when `runId` is undefined.
+// Bugs Documented: BUG-099 (cumulative summary leak + missing #N marker); follow-up UX refinement: detail-line label changed from `Compression #N` to `Compression total`, `→ Session total:` footer dropped, `→ Compression (~W):` footer renamed to `→ Summary:`.
 // Fakes Updated: none
 // Review Status: pending independent review.

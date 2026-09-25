@@ -258,8 +258,16 @@ test("compression notifications increment by tool call across range and message 
     )
 
     assert.equal(toastCalls.length, 2)
-    assert.match(toastCalls[0] || "", /Compression #1/)
-    assert.match(toastCalls[1] || "", /Compression #2/)
+    // BUG-099 follow-up: detail-line label is `Compression total` for both
+    // toasts; the per-compression marker now lives only in the headline
+    // (`▣ DCP | #N | ...`). Lock in both the new label and the per-call
+    // increment coverage via the headline.
+    assert.match(toastCalls[0] || "", /Compression total/)
+    assert.match(toastCalls[0] || "", /▣ DCP \| #1 \|/)
+    assert.match(toastCalls[1] || "", /Compression total/)
+    assert.match(toastCalls[1] || "", /▣ DCP \| #2 \|/)
+    assert.doesNotMatch(toastCalls[0] || "", /Compression #\d+ -/)
+    assert.doesNotMatch(toastCalls[0] || "", /→ Session total:/)
 })
 
 test("decompress groups batched message compressions by tool call", async () => {
@@ -450,7 +458,7 @@ test("decompress keeps batched ranges individually restorable", async () => {
     assert.equal(blocks[1]?.active, true)
     assert.equal(blocks[1]?.deactivatedByUser, false)
 })
-// Logic Verified: compression notifications increment by tool call across range/message tools, and decompress keeps batched ranges individually restorable.
+// Logic Verified: compression notifications increment by tool call across range/message tools, and decompress keeps batched ranges individually restorable; the per-toast detail label is `Compression total` with the per-call marker in the headline (BUG-099 follow-up UX refinement).
 // Bugs Documented: none.
 // Fakes Updated: none
 // Review Status: pending independent review.

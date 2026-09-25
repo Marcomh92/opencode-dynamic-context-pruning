@@ -703,11 +703,14 @@ test("compress message mode sends one aggregated notification for batched messag
     )
 
     assert.equal(toastCalls.length, 1)
-    assert.match(toastCalls[0] || "", /▣ DCP \| -[^,\n]+ removed, \+[^\s\n]+ summary/)
-    assert.match(toastCalls[0] || "", /Compression #1/)
-    assert.match(toastCalls[0] || "", /▣ Compression #1 -[^,\n]+ removed, \+[^\s\n]+ summary/)
+    assert.match(toastCalls[0] || "", /▣ DCP \| (#\d+ \| )?-[^,\n]+ removed, \+[^\s\n]+ summary/)
+    assert.match(toastCalls[0] || "", /Compression total/)
+    assert.match(toastCalls[0] || "", /▣ Compression total -[^,\n]+ removed, \+[^\s\n]+ summary/)
     assert.match(toastCalls[0] || "", /Topic: Batch stale notes/)
     assert.match(toastCalls[0] || "", /Items: 2 messages/)
+    // Lock out the BUG-099-era detail label and dropped footer.
+    assert.doesNotMatch(toastCalls[0] || "", /Compression #\d+ -/)
+    assert.doesNotMatch(toastCalls[0] || "", /→ Session total:/)
 })
 
 test("compress message mode skips messages that are already actively compressed", async () => {
@@ -899,7 +902,7 @@ test("compress message mode reports issues when every batch entry is skipped", a
 
     assert.equal(state.prune.messages.blocksById.size, 0)
 })
-// Logic Verified: compress-message mode appends the non-editable format extension, batches individual summaries, records call IDs, and refuses partial application on preparation failure.
+// Logic Verified: compress-message mode appends the non-editable format extension, batches individual summaries, records call IDs, and refuses partial application on preparation failure; the aggregated toast now uses the `Compression total` detail label and drops the `→ Session total:` footer (BUG-099 follow-up UX refinement).
 // Bugs Documented: none.
 // Fakes Updated: none
 // Review Status: pending independent review.

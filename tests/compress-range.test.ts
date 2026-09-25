@@ -351,11 +351,14 @@ test("compress range mode batches multiple ranges into one notification", async 
     assert.equal(result, "Compressed 2 messages into [Compressed conversation section].")
     assert.equal(state.prune.messages.blocksById.size, 2)
     assert.equal(toastCalls.length, 1)
-    assert.match(toastCalls[0] || "", /▣ DCP \| -[^,\n]+ removed, \+[^\s\n]+ summary/)
-    assert.match(toastCalls[0] || "", /Compression #1/)
-    assert.match(toastCalls[0] || "", /▣ Compression #1 -[^,\n]+ removed, \+[^\s\n]+ summary/)
+    assert.match(toastCalls[0] || "", /▣ DCP \| (#\d+ \| )?-[^,\n]+ removed, \+[^\s\n]+ summary/)
+    assert.match(toastCalls[0] || "", /Compression total/)
+    assert.match(toastCalls[0] || "", /▣ Compression total -[^,\n]+ removed, \+[^\s\n]+ summary/)
     assert.match(toastCalls[0] || "", /Topic: Batch stale notes/)
     assert.match(toastCalls[0] || "", /Items: 2 messages/)
+    // Lock out the BUG-099-era detail label and dropped footer.
+    assert.doesNotMatch(toastCalls[0] || "", /Compression #\d+ -/)
+    assert.doesNotMatch(toastCalls[0] || "", /→ Session total:/)
 })
 
 test("compress range mode rejects overlapping batched ranges", async () => {
@@ -584,7 +587,7 @@ test("compress range mode respects protectUserMessagesCount", async () => {
         )
     }
 })
-// Logic Verified: range mode rebuilds subagent message refs after session reset, appends protected prompt info, batches multiple ranges, rejects overlapping ranges, and respects protectUserMessagesCount end-to-end through createCompressRangeTool.
+// Logic Verified: range mode rebuilds subagent message refs after session reset, appends protected prompt info, batches multiple ranges, rejects overlapping ranges, and respects protectUserMessagesCount end-to-end through createCompressRangeTool; the batched toast now uses the `Compression total` detail label and drops the `→ Session total:` footer (BUG-099 follow-up UX refinement).
 // Bugs Documented: none.
 // Fakes Updated: none
 // Review Status: pending independent review.
