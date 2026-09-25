@@ -115,3 +115,9 @@ The `manualMode === "compress-pending"` flag exists solely to allow a `/dcp-comp
 The cache scaffolding exists; the production write site does not (M4 deleted the fetch-on-miss path). The HIT path is exercised only when an entry was previously written.
 
 **Rationale.** The fetch-on-miss path was the source of a round-overwrite bug. The safer fallback is `part.state.output`.
+
+## DPP-019 — Plugin directives ride the user role; assistant text is never directive-bearing
+
+Nudges and other directive content the plugin injects into the message stream must arrive where the model reads instructions (a system-prompt extension or a synthetic user-role message), never as a tail appended to the assistant's own prior text. Appending a directive to the assistant's last text part is parsed by the model as its own past speech and ignored.
+
+**Rationale.** The role boundary is the contract that distinguishes inbound instruction from ambient context. BUG-098 demonstrated that the old `appendToLastTextPart` injection mechanic (used for `iteration-nudge`, `turn-nudge`, `context-limit-nudge`) caused the agent to ignore ~6 nudges in a row during a single session because each directive read as a continuation of the assistant's own reply. The fix landed as a synthetic user message at `messages[index + 1]` for assistant anchors (INV-P14, INV-P15); the user-anchor path stays on `appendToLastTextPart` because user text IS inbound content by definition. Any future directive-injection feature must satisfy the same role-boundary rule, or repeat the bug.

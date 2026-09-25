@@ -13,9 +13,9 @@ import {
     listPriorityRefsBeforeIndex,
 } from "../priority"
 import {
-    appendToTextPart,
     appendToLastTextPart,
     createSyntheticTextPart,
+    createSyntheticUserMessage,
     hasContent,
 } from "../utils"
 import { getLastUserMessage, isIgnoredUserMessage } from "../query"
@@ -208,7 +208,15 @@ function buildMessagePriorityGuidance(
     return renderMessagePriorityGuidance(priorityLabel, refs)
 }
 
-function injectAnchoredNudge(message: WithParts, nudgeText: string): void {
+type NudgeType = "iteration" | "turn" | "context_limit"
+
+function injectAnchoredNudge(
+    message: WithParts,
+    index: number,
+    messages: WithParts[],
+    nudgeText: string,
+    nudgeType: NudgeType,
+): void {
     if (!nudgeText.trim()) {
         return
     }
@@ -230,21 +238,29 @@ function injectAnchoredNudge(message: WithParts, nudgeText: string): void {
         return
     }
 
-    for (const part of message.parts) {
-        if (part.type === "text") {
-            if (appendToTextPart(part, nudgeText)) {
-                return
-            }
-        }
+    // BUG-098: insert a synthetic user message at messages[index + 1]. The role
+    // boundary lets the model read the directive as inbound rather than as its
+    // own prior speech (the old append-to-assistant-text behaviour was ignored
+    // because the tail read as past self-quoted text). Three invariants the
+    // call site MUST preserve:
+    //   (1) the synthetic text part carries `synthetic: true` so
+    //       `isIgnoredUserMessage` (query.ts:54) skips it — otherwise each
+    //       nudge would reset the iteration counter via countMessagesAfterIndex
+    //       AND become the "last user message" for protectUserMessages;
+    //   (2) the seed is deterministic (`dcp_nudge:<nudgeType>:<anchorId>`) so
+    //       the messageId is stable across transform-hook re-fires;
+    //   (3) idempotency is enforced by checking messages[index+1].info.id
+    //       against the deterministic messageId — replaces the old endsWith
+    //       check on the assistant's last text part.
+    // Callers iterate in reverse-index order so an insert here does not shift
+    // the indices of anchors still to be visited.
+    const seed = `dcp_nudge:${nudgeType}:${message.info.id}`
+    const syntheticMessage = createSyntheticUserMessage(message, nudgeText, seed, true)
+    const adjacent = messages[index + 1]
+    if (adjacent && adjacent.info.id === syntheticMessage.info.id) {
+        return
     }
-
-    const syntheticPart = createSyntheticTextPart(message, nudgeText)
-    const firstToolIndex = message.parts.findIndex((p) => p.type === "tool")
-    if (firstToolIndex === -1) {
-        message.parts.push(syntheticPart)
-    } else {
-        message.parts.splice(firstToolIndex, 0, syntheticPart)
-    }
+    messages.splice(index + 1, 0, syntheticMessage)
 }
 
 function collectAnchoredMessages(
@@ -292,14 +308,19 @@ function applyRangeModeAnchoredNudge(
     messages: WithParts[],
     baseNudgeText: string,
     compressedBlockGuidance: string,
+    nudgeType: NudgeType,
 ): void {
     const nudgeText = appendGuidanceToDcpTag(baseNudgeText, compressedBlockGuidance)
     if (!nudgeText.trim()) {
         return
     }
 
-    for (const { message } of collectAnchoredMessages(anchorMessageIds, messages)) {
-        injectAnchoredNudge(message, nudgeText)
+    // BUG-098: iterate highest-index first so an insert at index+1 does not
+    // shift the indices of anchors still to be visited.
+    const anchoredMessages = collectAnchoredMessages(anchorMessageIds, messages)
+    anchoredMessages.sort((a, b) => b.index - a.index)
+    for (const { message, index } of anchoredMessages) {
+        injectAnchoredNudge(message, index, messages, nudgeText, nudgeType)
     }
 }
 
@@ -307,9 +328,17 @@ function applyMessageModeAnchoredNudge(
     anchorMessageIds: Set<string>,
     messages: WithParts[],
     baseNudgeText: string,
+    nudgeType: NudgeType,
     compressionPriorities?: CompressionPriorityMap,
 ): void {
-    for (const { message, index } of collectAnchoredMessages(anchorMessageIds, messages)) {
+    // BUG-098: iterate highest-index first so an insert at index+1 does not
+    // shift the indices of anchors still to be visited. The priorityGuidance
+    // is keyed off the anchor's position; with reverse iteration the index
+    // we pass to buildMessagePriorityGuidance is the original anchor index
+    // (not affected by inserts we have not done yet).
+    const anchoredMessages = collectAnchoredMessages(anchorMessageIds, messages)
+    anchoredMessages.sort((a, b) => b.index - a.index)
+    for (const { message, index } of anchoredMessages) {
         const priorityGuidance = buildMessagePriorityGuidance(
             messages,
             compressionPriorities,
@@ -317,7 +346,7 @@ function applyMessageModeAnchoredNudge(
             MESSAGE_MODE_NUDGE_PRIORITY,
         )
         const nudgeText = appendGuidanceToDcpTag(baseNudgeText, priorityGuidance)
-        injectAnchoredNudge(message, nudgeText)
+        injectAnchoredNudge(message, index, messages, nudgeText, nudgeType)
     }
 }
 
@@ -335,18 +364,21 @@ export function applyAnchoredNudges(
             state.nudges.contextLimitAnchors,
             messages,
             prompts.contextLimitNudge,
+            "context_limit",
             compressionPriorities,
         )
         applyMessageModeAnchoredNudge(
             turnNudgeAnchors,
             messages,
             prompts.turnNudge,
+            "turn",
             compressionPriorities,
         )
         applyMessageModeAnchoredNudge(
             state.nudges.iterationNudgeAnchors,
             messages,
             prompts.iterationNudge,
+            "iteration",
             compressionPriorities,
         )
         return
@@ -358,17 +390,20 @@ export function applyAnchoredNudges(
         messages,
         prompts.contextLimitNudge,
         compressedBlockGuidance,
+        "context_limit",
     )
     applyRangeModeAnchoredNudge(
         turnNudgeAnchors,
         messages,
         prompts.turnNudge,
         compressedBlockGuidance,
+        "turn",
     )
     applyRangeModeAnchoredNudge(
         state.nudges.iterationNudgeAnchors,
         messages,
         prompts.iterationNudge,
         compressedBlockGuidance,
+        "iteration",
     )
 }

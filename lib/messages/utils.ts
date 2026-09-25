@@ -19,6 +19,13 @@ export const createSyntheticUserMessage = (
     baseMessage: WithParts,
     content: string,
     stableSeed?: string,
+    // BUG-098: when true, the text part carries `synthetic: true` so
+    // `isIgnoredUserMessage` (query.ts:54) skips the message. Required for
+    // nudge sites where the synthetic must NOT count as a real user turn
+    // (would reset `messagesSinceUser` iteration counter and become the
+    // "last user message" for `protectUserMessages`). Default false keeps
+    // the compression-summary call site (lib/messages/prune.ts:225) untouched.
+    flagTextPartAsSynthetic: boolean = false,
 ): WithParts => {
     const userInfo = baseMessage.info as UserMessage
     const deterministicSeed = stableSeed?.trim() || userInfo.id
@@ -56,6 +63,7 @@ export const createSyntheticUserMessage = (
                 messageID: messageId,
                 type: "text" as const,
                 text: content,
+                ...(flagTextPartAsSynthetic ? { synthetic: true } : {}),
             },
         ],
     }

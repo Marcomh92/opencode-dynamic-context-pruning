@@ -154,6 +154,7 @@ The following reports describe the same root cause or surface. Fix once, mark th
 | BUG-088 | `loadAllSessionStats` double-counts `totalPruneTokens` when compression blocks are inherited across forked sessions                                                         | Low                           | Fixed  | 2026-08-10 |
 | BUG-092 | Fork candidate scan is O(entire state dir) with no bound - log spam + latency grows with months of use                                                                      | Low                           | Fixed  | 2026-08-10 |
 | BUG-094 | `isIgnoredUserMessage` did not recognise `part.synthetic`, so synthetic user messages from third-party plugins were protected verbatim under `compress.protectUserMessages` | Low-Medium                    | Fixed  | 2026-08-13 |
+| BUG-098 | Iteration nudge was appended to the agent's own assistant message; the model parsed the directive as past self-quoted text and ignored it                                   | High                          | Fixed  | 2026-09-23 |
 
 _Move files to `fixed/` and add a row here when resolved._
 

@@ -5,9 +5,10 @@ import { createTextCompleteHandler } from "../lib/hooks"
 import { Logger } from "../lib/logger"
 import { assignMessageRefs } from "../lib/message-ids"
 import { injectMessageIds } from "../lib/messages/inject/inject"
-import { applyAnchoredNudges } from "../lib/messages/inject/utils"
+import { applyAnchoredNudges, countMessagesAfterIndex } from "../lib/messages/inject/utils"
 import { prune } from "../lib/messages/prune"
 import { buildPriorityMap } from "../lib/messages/priority"
+import { isIgnoredUserMessage } from "../lib/messages/query"
 import { stripHallucinationsFromString } from "../lib/messages/utils"
 import { createSessionState, type WithParts } from "../lib/state"
 
@@ -472,8 +473,13 @@ test("BUG-096 last-N: priority map excludes only the LAST protected user message
     )
 })
 
-test("range-mode nudges append to existing text parts before tool outputs", () => {
-    const sessionID = "ses_range_nudge_injection"
+test("BUG-098: range-mode assistant-anchored nudge inserts a synthetic user message at index+1", () => {
+    // BUG-098: the nudge is delivered as a NEW synthetic user message at
+    // messages[index + 1]; the anchored assistant's text parts are
+    // byte-identical to pre-nudge (the model no longer reads its own prior
+    // reply as a directive). The tool output on the anchored assistant is
+    // also untouched.
+    const sessionID = "ses_range_nudge_injection_bug098"
     const messages: WithParts[] = [
         buildMessage("msg-user-1", "user", sessionID, repeatedWord("alpha", 6000), 1),
         {
@@ -501,25 +507,42 @@ test("range-mode nudges append to existing text parts before tool outputs", () =
         system: "",
         compressRange: "",
         compressMessage: "",
-        contextLimitNudge: "<dcp-system-reminder>Base context nudge</dcp-system-reminder>",
-        turnNudge: "<dcp-system-reminder>Base turn nudge</dcp-system-reminder>",
-        iterationNudge: "<dcp-system-reminder>Base iteration nudge</dcp-system-reminder>",
+        contextLimitNudge: "Base context nudge",
+        turnNudge: "",
+        iterationNudge: "",
     })
 
+    // The anchored assistant and its parts are untouched.
     assert.equal(messages[1]?.parts.length, 2)
+    assert.equal((messages[1]?.parts[0] as any).text, "Working summary.")
+    assert.equal((messages[1]?.parts[1] as any).state.output, "task output body")
 
-    const injectedNudge = messages[1]?.parts[0]
-    const toolOutput = messages[1]?.parts[1]
-    assert.equal(injectedNudge?.type, "text")
-    assert.equal(toolOutput?.type, "tool")
-    assert.match((injectedNudge as any).text, /\n\n<dcp-system-reminder>Base context nudge/)
-    assert.match((injectedNudge as any).text, /Compressed block context:/)
-    assert.match((injectedNudge as any).text, /Active compressed blocks in this session: 1 \(b7\)/)
-    assert.equal((toolOutput as any).state.output, "task output body")
+    // The synthetic user message was spliced in at index + 1.
+    const synthetic = messages[2]
+    assert.ok(synthetic, "synthetic user message must exist at messages[index + 1]")
+    assert.equal(synthetic.info.role, "user")
+    assert.match(synthetic.info.id, /^msg_dcp_summary_[0-9a-f]{16}$/)
+    assert.deepEqual(synthetic.info.time, { created: 0 }, "synthetic time sentinel is 0")
+    assert.equal(synthetic.parts.length, 1)
+
+    const nudgeTextPart = synthetic.parts[0] as { type: string; text: string; synthetic?: boolean }
+    assert.equal(nudgeTextPart.type, "text")
+    assert.equal(nudgeTextPart.synthetic, true, "text part must carry synthetic:true")
+    // BUG-097 quirk: `appendGuidanceToDcpTag` only splices the guidance
+    // when the close tag is present in `nudgeText` (closeTag.lastIndexOf
+    // returns -1 on a plain text input and we early-return the input
+    // unchanged). So in this fixture the synthetic message carries the
+    // input verbatim — that's the expected contract.
+    assert.match(nudgeTextPart.text, /Base context nudge/)
 })
 
-test("range-mode nudges inject only once for assistant messages with multiple text parts", () => {
-    const sessionID = "ses_range_nudge_multi_text"
+test("BUG-098: range-mode nudge on assistant with multiple text parts still inserts exactly one synthetic user message", () => {
+    // BUG-098: regardless of how many text parts the assistant carries, the
+    // nudge is delivered as a single new synthetic user message immediately
+    // after the anchor (NOT appended to any assistant text part). Idempotency
+    // is now enforced by checking messages[index+1].info.id against the
+    // deterministic synthetic messageId — replaces the old endsWith check.
+    const sessionID = "ses_range_nudge_multi_text_bug098"
     const messages: WithParts[] = [
         buildMessage("msg-user-1", "user", sessionID, "Hello", 1),
         {
@@ -546,13 +569,372 @@ test("range-mode nudges inject only once for assistant messages with multiple te
         system: "",
         compressRange: "",
         compressMessage: "",
-        contextLimitNudge: "<dcp-system-reminder>Base context nudge</dcp-system-reminder>",
-        turnNudge: "<dcp-system-reminder>Base turn nudge</dcp-system-reminder>",
-        iterationNudge: "<dcp-system-reminder>Base iteration nudge</dcp-system-reminder>",
+        contextLimitNudge: "Base context nudge",
+        turnNudge: "",
+        iterationNudge: "",
     })
 
-    assert.match((messages[1]?.parts[0] as any).text, /Base context nudge/)
-    assert.doesNotMatch((messages[1]?.parts[1] as any).text, /Base context nudge/)
+    // Both assistant text parts are byte-identical to pre-nudge.
+    assert.equal(messages[1]?.parts.length, 2)
+    assert.equal((messages[1]?.parts[0] as any).text, "First chunk.")
+    assert.equal((messages[1]?.parts[1] as any).text, "Second chunk.")
+
+    // Exactly one synthetic user message inserted at index + 1.
+    assert.equal(messages.length, 3)
+    const synthetic = messages[2]
+    assert.ok(synthetic, "synthetic user message must exist at messages[index + 1]")
+    assert.equal(synthetic.info.role, "user")
+    assert.match(synthetic.info.id, /^msg_dcp_summary_[0-9a-f]{16}$/)
+    assert.equal(synthetic.parts.length, 1)
+    const nudgeTextPart = synthetic.parts[0] as { type: string; text: string; synthetic?: boolean }
+    assert.equal(nudgeTextPart.type, "text")
+    assert.equal(nudgeTextPart.synthetic, true)
+    assert.match(nudgeTextPart.text, /Base context nudge/)
+
+    // Re-fire is a no-op (idempotency via adjacent-id check, not endsWith).
+    applyAnchoredNudges(state, config, messages, {
+        system: "",
+        compressRange: "",
+        compressMessage: "",
+        contextLimitNudge: "Base context nudge",
+        turnNudge: "",
+        iterationNudge: "",
+    })
+    assert.equal(messages.length, 3, "re-fire must not append a second synthetic nudge")
+    assert.equal(
+        messages[2].info.id,
+        synthetic.info.id,
+        "synthetic messageId is stable across re-fires",
+    )
+})
+
+test("BUG-098: synthetic nudge is ignored by isIgnoredUserMessage (count-math invariant)", () => {
+    // BUG-098: the synthetic nudge MUST carry `synthetic: true` on its text
+    // part so `isIgnoredUserMessage` (query.ts:54) skips it. Without that
+    // flag the nudge would become the "last user message" and the iteration
+    // counter (`messagesSinceUser`) would reset to 0 on every fire.
+    const sessionID = "ses_bug098_synthetic_isignored"
+    const messages: WithParts[] = [
+        buildMessage("msg-user-1", "user", sessionID, "Hello", 1),
+        {
+            info: {
+                id: "msg-assistant-1",
+                role: "assistant",
+                sessionID,
+                agent: "assistant",
+                time: { created: 2 },
+            } as WithParts["info"],
+            parts: [
+                textPart("msg-assistant-1", sessionID, "msg-assistant-1-part", "Working summary."),
+            ],
+        },
+    ]
+    const state = createSessionState()
+    const config = buildConfig("range")
+
+    assignMessageRefs(state, messages)
+    state.nudges.contextLimitAnchors.add("msg-assistant-1")
+
+    applyAnchoredNudges(state, config, messages, {
+        system: "",
+        compressRange: "",
+        compressMessage: "",
+        contextLimitNudge: "Base context nudge",
+        turnNudge: "",
+        iterationNudge: "",
+    })
+
+    const synthetic = messages[2]
+    assert.ok(synthetic, "synthetic user message must be inserted")
+    assert.equal(
+        isIgnoredUserMessage(synthetic),
+        true,
+        "synthetic nudge is excluded from real-user counters",
+    )
+
+    // The anchored assistant and the original user message are NOT ignored.
+    assert.equal(isIgnoredUserMessage(messages[0]), false)
+    assert.equal(isIgnoredUserMessage(messages[1]), false, "assistant messages are never ignored")
+})
+
+test("BUG-098: countMessagesAfterIndex excludes the synthetic nudge (iteration threshold re-trips)", () => {
+    // BUG-098: `countMessagesAfterIndex` skips ignored user messages, so the
+    // synthetic nudge does NOT bump `messagesSinceUser`. The next transform
+    // fire against the same anchor still observes a stable count of real
+    // messages since the last real user message and re-trips
+    // `iterationNudgeThreshold` if the count is at or above the threshold.
+    const sessionID = "ses_bug098_count_messages_after_index"
+    const messages: WithParts[] = [
+        buildMessage("msg-user-1", "user", sessionID, "Hello", 1),
+        {
+            info: {
+                id: "msg-assistant-1",
+                role: "assistant",
+                sessionID,
+                agent: "assistant",
+                time: { created: 2 },
+            } as WithParts["info"],
+            parts: [
+                textPart("msg-assistant-1", sessionID, "msg-assistant-1-part", "Working summary."),
+            ],
+        },
+    ]
+    const state = createSessionState()
+    const config = buildConfig("range")
+
+    assignMessageRefs(state, messages)
+    state.nudges.iterationNudgeAnchors.add("msg-assistant-1")
+
+    // Pre-fire: index 1 (assistant) has 0 messages after it.
+    assert.equal(countMessagesAfterIndex(messages, 1), 0)
+
+    applyAnchoredNudges(state, config, messages, {
+        system: "",
+        compressRange: "",
+        compressMessage: "",
+        contextLimitNudge: "",
+        turnNudge: "",
+        iterationNudge: "Iterating. Consider compressing.",
+    })
+
+    // Post-fire: the synthetic nudge was added at index + 1 = 2, but
+    // `countMessagesAfterIndex` skips it, so the count remains 0.
+    assert.equal(messages.length, 3, "synthetic message was inserted at index + 1")
+    assert.equal(
+        countMessagesAfterIndex(messages, 1),
+        0,
+        "synthetic nudge does not count toward messagesSinceUser",
+    )
+
+    // Sanity: an unrelated real message after the anchor WOULD be counted.
+    messages.push(buildMessage("msg-assistant-2", "assistant", sessionID, "More tool output.", 3))
+    assert.equal(countMessagesAfterIndex(messages, 1), 1, "real assistant messages are counted")
+})
+
+test("BUG-098: range-mode user-anchored nudge still appends to user text part (regression lock)", () => {
+    // BUG-098: the synthetic-user-message path is assistant-only. When the
+    // anchor is a USER message the unchanged user-role branch fires
+    // (`appendToLastTextPart`), keeping regression parity with the original
+    // behaviour. This is the regression lock for the user-role branch.
+    const sessionID = "ses_bug098_user_anchor_regression"
+    const messages: WithParts[] = [
+        {
+            info: {
+                id: "msg-user-1",
+                role: "user",
+                sessionID,
+                agent: "assistant",
+                model: { providerID: "anthropic", modelID: "claude-test" },
+                time: { created: 1 },
+            } as WithParts["info"],
+            parts: [textPart("msg-user-1", sessionID, "msg-user-1-part", "Original user content.")],
+        },
+    ]
+    const state = createSessionState()
+    const config = buildConfig("range")
+
+    assignMessageRefs(state, messages)
+    state.nudges.contextLimitAnchors.add("msg-user-1")
+
+    applyAnchoredNudges(state, config, messages, {
+        system: "",
+        compressRange: "",
+        compressMessage: "",
+        contextLimitNudge: "Base context nudge",
+        turnNudge: "",
+        iterationNudge: "",
+    })
+
+    // No synthetic message was inserted (user-anchor branch inlines into the
+    // user text part).
+    assert.equal(messages.length, 1)
+
+    const userText = (messages[0]?.parts[0] as any).text as string
+    assert.match(userText, /Original user content\./)
+    assert.match(userText, /Base context nudge/)
+    // Regression lock: the user message itself stays a real user message,
+    // not a synthetic one (no synthetic:true flag on its text part).
+    assert.notEqual(
+        (messages[0]?.parts[0] as any).synthetic,
+        true,
+        "real user text part must not carry synthetic:true",
+    )
+})
+
+test("BUG-098: nudge carries no mNNNN tag after injectMessageIds and no priority-map entry in message mode", () => {
+    // BUG-098: synthetic user messages are skipped by `injectMessageIds`
+    // (inject.ts:183) and by `buildPriorityMap` (priority.ts:40) on the
+    // `isIgnoredUserMessage` gate. After the nudge is inserted and the
+    // downstream steps run, the synthetic message still carries no
+    // mNNNN tag and no priority-map entry — so it does not feed the
+    // priority guidance the model uses to choose compression targets.
+    const sessionID = "ses_bug098_no_tag_no_priority"
+    const messages: WithParts[] = [
+        buildMessage("msg-user-1", "user", sessionID, "Hello", 1),
+        {
+            info: {
+                id: "msg-assistant-1",
+                role: "assistant",
+                sessionID,
+                agent: "assistant",
+                time: { created: 2 },
+            } as WithParts["info"],
+            parts: [
+                textPart("msg-assistant-1", sessionID, "msg-assistant-1-part", "Working summary."),
+            ],
+        },
+    ]
+    const state = createSessionState()
+    const config = buildConfig("message")
+
+    assignMessageRefs(state, messages)
+    state.nudges.contextLimitAnchors.add("msg-assistant-1")
+
+    // Priority map is built BEFORE the nudge is inserted; the synthetic
+    // message is created downstream and never enters the map.
+    const compressionPriorities = buildPriorityMap(config, state, messages)
+
+    applyAnchoredNudges(
+        state,
+        config,
+        messages,
+        {
+            system: "",
+            compressRange: "",
+            compressMessage: "",
+            contextLimitNudge: "Base context nudge",
+            turnNudge: "",
+            iterationNudge: "",
+        },
+        compressionPriorities,
+    )
+
+    injectMessageIds(state, config, messages, compressionPriorities)
+
+    const synthetic = messages[2]
+    assert.ok(synthetic, "synthetic message must be inserted")
+    const syntheticText = (synthetic.parts[0] as any).text as string
+    assert.doesNotMatch(
+        syntheticText,
+        /dcp-message-id>/,
+        "synthetic nudge carries no dcp-message-id tag",
+    )
+    assert.doesNotMatch(syntheticText, /BLOCKED/, "synthetic nudge is not BLOCKED-tagged")
+    // No priority-map entry for the synthetic message ID.
+    assert.equal(
+        compressionPriorities.get(synthetic.info.id),
+        undefined,
+        "synthetic nudge has no priority-map entry (isIgnoredUserMessage gate)",
+    )
+})
+
+test("BUG-098: turn-nudge dual-mode — default-mode anchors assistant (synthetic), strong-mode anchors user (append)", () => {
+    // BUG-098: `collectTurnNudgeAnchors` (utils.ts:292) picks the target role
+    // from `nudgeForce`: default ("soft") → assistant → synthetic user
+    // message; "strong" → user → nudge appended to user text part. Both
+    // branches must continue to work after the BUG-098 redesign.
+    const baseMessages = (sessionID: string): WithParts[] => [
+        {
+            info: {
+                id: "msg-user-1",
+                role: "user",
+                sessionID,
+                agent: "assistant",
+                model: { providerID: "anthropic", modelID: "claude-test" },
+                time: { created: 1 },
+            } as WithParts["info"],
+            parts: [textPart("msg-user-1", sessionID, "msg-user-1-part", "User content.")],
+        },
+        {
+            info: {
+                id: "msg-assistant-1",
+                role: "assistant",
+                sessionID,
+                agent: "assistant",
+                time: { created: 2 },
+            } as WithParts["info"],
+            parts: [
+                textPart(
+                    "msg-assistant-1",
+                    sessionID,
+                    "msg-assistant-1-part",
+                    "Assistant content.",
+                ),
+            ],
+        },
+    ]
+
+    // ----- default mode: turn-nudge anchors the assistant, synthetic message -----
+    {
+        const sessionID = "ses_bug098_turn_default_soft"
+        const messages = baseMessages(sessionID)
+        const state = createSessionState()
+        const config = buildConfig("range")
+        config.compress.nudgeForce = "soft"
+
+        assignMessageRefs(state, messages)
+        state.nudges.turnNudgeAnchors.add("msg-assistant-1")
+
+        applyAnchoredNudges(state, config, messages, {
+            system: "",
+            compressRange: "",
+            compressMessage: "",
+            contextLimitNudge: "",
+            turnNudge: "Turn nudge.",
+            iterationNudge: "",
+        })
+
+        assert.equal(
+            messages.length,
+            3,
+            "default-mode turn-nudge inserts a synthetic user message after the assistant anchor",
+        )
+        const synthetic = messages[2]
+        assert.equal(synthetic.info.role, "user")
+        assert.match(synthetic.info.id, /^msg_dcp_summary_[0-9a-f]{16}$/)
+        assert.equal((synthetic.parts[0] as any).synthetic, true)
+        assert.match((synthetic.parts[0] as any).text, /Turn nudge\./)
+        // The anchored assistant remains byte-identical.
+        assert.equal((messages[1]?.parts[0] as any).text, "Assistant content.")
+    }
+
+    // ----- strong mode: turn-nudge anchors the user, appended to user text part -----
+    {
+        const sessionID = "ses_bug098_turn_strong"
+        const messages = baseMessages(sessionID)
+        const state = createSessionState()
+        const config = buildConfig("range")
+        config.compress.nudgeForce = "strong"
+
+        assignMessageRefs(state, messages)
+        state.nudges.turnNudgeAnchors.add("msg-user-1")
+
+        applyAnchoredNudges(state, config, messages, {
+            system: "",
+            compressRange: "",
+            compressMessage: "",
+            contextLimitNudge: "",
+            turnNudge: "Turn nudge.",
+            iterationNudge: "",
+        })
+
+        // Strong mode anchors user → no synthetic insert; nudge appended inline.
+        assert.equal(
+            messages.length,
+            2,
+            "strong-mode turn-nudge does NOT insert a synthetic user message",
+        )
+        const userText = (messages[0]?.parts[0] as any).text as string
+        assert.match(userText, /User content\./)
+        assert.match(userText, /Turn nudge\./)
+        assert.notEqual(
+            (messages[0]?.parts[0] as any).synthetic,
+            true,
+            "real user text part must not carry synthetic:true",
+        )
+        // Assistant anchor was NOT picked (target role is "user").
+        assert.equal((messages[1]?.parts[0] as any).text, "Assistant content.")
+    }
 })
 
 test("range-mode nudges skip empty assistant messages to avoid prefill (issue #463)", () => {
@@ -930,7 +1312,7 @@ test("injectMessageIds skips assistant with empty text part (issue #463)", () =>
         "empty text part should remain untouched",
     )
 })
-// Logic Verified: injectMessageIds injects into every tool output for range/message modes, marks compress tool messages high-priority, and nudge text excludes protected user messages.
-// Bugs Documented: none.
+// Logic Verified: injectMessageIds injects into every tool output for range/message modes, marks compress tool messages high-priority, and nudge text excludes protected user messages. BUG-098 rewrites lock in the new assistant-anchored nudge contract (synthetic user message at index+1, byte-identical anchored parts, synthetic:true on text part, isIgnoredUserMessage + countMessagesAfterIndex invariants, byte-stable re-fire, user-anchor regression lock, no mNNNN tag / no priority-map entry, turn-nudge dual-mode).
+// Bugs Documented: BUG-098 (iteration nudge appended to assistant's own text, not delivered as a directive).
 // Fakes Updated: none
-// Review Status: pending independent review.
+// Review Status: independent review not yet requested for this batch.
