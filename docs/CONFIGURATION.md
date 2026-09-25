@@ -104,17 +104,19 @@ The strip runs at the protected-text injection point in `lib/compress/protected-
 
 ## Runtime defaults
 
-| Key                                 | Default           | Source                                             |
-| ----------------------------------- | ----------------- | -------------------------------------------------- |
-| `compress.mode`                     | `range`           | `lib/config.ts` runtime defaults                   |
-| `compress.permission`               | `allow`           | `lib/config.ts` runtime defaults                   |
-| `compress.protectedTools`           | `[]`              | v2 fork; no default                                |
-| `compress.stripPatterns`            | `[]`              | `lib/config.ts:941`; no behavior change on default |
-| `compress.protectUserMessages`      | `false`           | `lib/config.ts` runtime defaults                   |
-| `compress.protectUserMessagesCount` | `1`               | `lib/config.ts` runtime defaults                   |
-| `autoUpdate`                        | `false`           | `lib/config.ts` runtime defaults                   |
-| `compress.stateMaxAgeDays`          | `null` (disabled) | `lib/config.ts`                                    |
-| `compress.stateRetentionDays`       | `7`               | `lib/config.ts`                                    |
+| Key                                 | Default           | Source                                                                                                                                         |
+| ----------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compress.mode`                     | `range`           | `lib/config.ts` runtime defaults                                                                                                               |
+| `compress.permission`               | `allow`           | `lib/config.ts` runtime defaults                                                                                                               |
+| `compress.protectedTools`           | `[]`              | v2 fork; no default                                                                                                                            |
+| `compress.stripPatterns`            | `[]`              | `lib/config.ts:941`; no behavior change on default                                                                                             |
+| `compress.protectUserMessages`      | `false`           | `lib/config.ts` runtime defaults                                                                                                               |
+| `compress.protectUserMessagesCount` | `1`               | `lib/config.ts` runtime defaults                                                                                                               |
+| `compress.summaryBuffer`            | `true`            | `lib/config.ts:1014`                                                                                                                           |
+| `compress.summaryBufferMinRatio`    | `0.2`             | `lib/config.ts:1015`; fraction of active summary tokens added to `minContextLimit` when `summaryBuffer` is true; set to `0` to disable cleanly |
+| `autoUpdate`                        | `false`           | `lib/config.ts` runtime defaults                                                                                                               |
+| `compress.stateMaxAgeDays`          | `null` (disabled) | `lib/config.ts`                                                                                                                                |
+| `compress.stateRetentionDays`       | `7`               | `lib/config.ts`                                                                                                                                |
 
 `compress.stateRetentionDays` is the wall-clock retention for files in the DCP storage dir. Days before state files are excluded from the fork candidate scan (mtime pre-filter, `lib/state/inherit.ts:365-398`) and deleted by the sweep on save (`lib/state/persistence.ts:101-155`). Default `7`. Values below 1 (including `0`, negative, and fractional) collapse to `null` (disabled) via `clampStateRetentionDays` (`lib/config.ts:1130-1135`) — the helper enforces this so a user typo of `-1` or `0` falls back to disabled instead of silently deleting every state file. Distinct from `compress.stateMaxAgeDays` (load gate, also disabled at `null`); `stateRetentionDays` is the sweep + scan threshold (file deletion); `stateMaxAgeDays` is the load-time rejection threshold (no file deletion). BUG-092.
 

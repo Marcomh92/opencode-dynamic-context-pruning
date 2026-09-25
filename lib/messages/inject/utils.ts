@@ -150,7 +150,22 @@ export function isContextOverLimits(
         resolvedMaxContextLimit === undefined
             ? undefined
             : resolvedMaxContextLimit + summaryTokenExtension
-    const minContextLimit = resolveContextTokenLimit(config, state, providerId, modelId, "min")
+    const resolvedMinContextLimit = resolveContextTokenLimit(
+        config,
+        state,
+        providerId,
+        modelId,
+        "min",
+    )
+    // ponytail: scales the same summary extension onto `minContextLimit` so the
+    // min threshold rises with active summary size (default 0.2 = 20%). 0 cleanly
+    // disables without needing a separate boolean. Undefined → undefined so the
+    // "always nudge when min is unset" semantics below remain intact.
+    const minContextLimit =
+        resolvedMinContextLimit === undefined
+            ? undefined
+            : resolvedMinContextLimit +
+              summaryTokenExtension * (config.compress.summaryBufferMinRatio ?? 0)
     const currentTokens = getCurrentTokenUsage(state, messages)
 
     const overMaxLimit = maxContextLimit === undefined ? false : currentTokens > maxContextLimit

@@ -169,6 +169,13 @@
                     "default": true,
                     "description": "When enabled, active summary tokens extend the effective maxContextLimit used for context-limit nudges."
                 },
+                "summaryBufferMinRatio": {
+                    "type": "number",
+                    "default": 0.2,
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Fraction of active summary tokens added to minContextLimit when summaryBuffer is enabled (0..1). Default 0.2 = 20%. Lower values = nudges fire sooner, higher values = more breathing room in long-running sessions with growing summaries. Set to 0 to disable the min-side extension cleanly without flipping summaryBuffer off."
+                },
                 "maxContextLimit": {
                     "description": "Soft upper threshold. Above this, DCP keeps sending strong compression nudges (based on nudgeFrequency), so the model is pushed to compress. Accepts number or \"X%\" of the model context window.",
                     "default": 200000,

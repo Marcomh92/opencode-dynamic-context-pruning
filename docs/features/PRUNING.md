@@ -62,17 +62,18 @@ Replacement strings are module-locals at `lib/messages/prune.ts:9-12`.
 
 ## Boundaries
 
-| Boundary                                     | Behavior                                                                                                      |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `compressPermission === "deny"`              | Both nudge and id-injection bail.                                                                             |
-| `state.manualMode` true                      | Nudges off. Strategies honor `config.manualMode.automaticStrategies`.                                         |
-| Subagent session                             | Skipped upstream.                                                                                             |
-| Empty / malformed summary                    | `logger.warn` and skip; no synthetic inserted.                                                                |
-| Unknown `rawMessageId`                       | Skipped; no priority entry.                                                                                   |
-| `purgeErrors.turns` < 1                      | Validator warns; `Math.max(1, …)` clamps at runtime.                                                          |
-| `nudgeFrequency` / `iterationNudgeThreshold` | Clamped to `≥1`.                                                                                              |
-| `compress.summaryBuffer` falsy               | `getActiveSummaryTokenUsage` returns undefined.                                                               |
-| Max/min context limit resolution             | Per-model override → global; `number` or `${number}%`; undefined `modelContextLimit` skips percentage branch. |
+| Boundary                                     | Behavior                                                                                                                                                                           |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compressPermission === "deny"`              | Both nudge and id-injection bail.                                                                                                                                                  |
+| `state.manualMode` true                      | Nudges off. Strategies honor `config.manualMode.automaticStrategies`.                                                                                                              |
+| Subagent session                             | Skipped upstream.                                                                                                                                                                  |
+| Empty / malformed summary                    | `logger.warn` and skip; no synthetic inserted.                                                                                                                                     |
+| Unknown `rawMessageId`                       | Skipped; no priority entry.                                                                                                                                                        |
+| `purgeErrors.turns` < 1                      | Validator warns; `Math.max(1, …)` clamps at runtime.                                                                                                                               |
+| `nudgeFrequency` / `iterationNudgeThreshold` | Clamped to `≥1`.                                                                                                                                                                   |
+| `compress.summaryBuffer` falsy               | `isContextOverLimits` zeroes `summaryTokenExtension`; neither max nor min threshold gets the summary-token bump. `getActiveSummaryTokenUsage` itself always returns a `number`.    |
+| `compress.summaryBufferMinRatio` 0..1        | Fraction of active summary tokens also added to `minContextLimit` when `summaryBuffer` is true. Default `0.2`. Set to `0` to disable cleanly without flipping `summaryBuffer` off. |
+| Max/min context limit resolution             | Per-model override → global; `number` or `${number}%`; undefined `modelContextLimit` skips percentage branch.                                                                      |
 
 ## Dependencies
 

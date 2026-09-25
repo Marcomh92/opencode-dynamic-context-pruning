@@ -27,6 +27,16 @@ export interface CompressConfig {
     permission: Permission
     showCompression: boolean
     summaryBuffer: boolean
+    // ponytail: scales the same summary-token extension onto `minContextLimit`,
+    // so turn/iteration nudges in long-running sessions don't keep firing as
+    // the active summary grows. 0 disables (no min-buffer) without needing a
+    // separate boolean — the `summaryBuffer` on/off switch still gates both
+    // extensions. Optional so test fixtures that don't set it degrade to
+    // `clampUnit(undefined) === 0` (no extension) instead of producing NaN at
+    // the `summaryTokenExtension * ratio` multiply. Production always sets the
+    // default via `defaultConfig`. Upgrade path = per-model override if usage
+    // diverges.
+    summaryBufferMinRatio?: number
     maxContextLimit: number | `${number}%`
     minContextLimit: number | `${number}%`
     modelMaxLimits?: Record<string, number | `${number}%`>
@@ -147,6 +157,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "compress.permission",
     "compress.showCompression",
     "compress.summaryBuffer",
+    "compress.summaryBufferMinRatio",
     "compress.maxContextLimit",
     "compress.minContextLimit",
     "compress.modelMaxLimits",
@@ -470,6 +481,27 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     key: "compress.summaryBuffer",
                     expected: "boolean",
                     actual: typeof compress.summaryBuffer,
+                })
+            }
+
+            if (
+                compress.summaryBufferMinRatio !== undefined &&
+                typeof compress.summaryBufferMinRatio !== "number"
+            ) {
+                errors.push({
+                    key: "compress.summaryBufferMinRatio",
+                    expected: "number",
+                    actual: typeof compress.summaryBufferMinRatio,
+                })
+            }
+            if (
+                typeof compress.summaryBufferMinRatio === "number" &&
+                (compress.summaryBufferMinRatio < 0 || compress.summaryBufferMinRatio > 1)
+            ) {
+                errors.push({
+                    key: "compress.summaryBufferMinRatio",
+                    expected: "number in [0, 1]",
+                    actual: `${compress.summaryBufferMinRatio} (will be clamped)`,
                 })
             }
 
@@ -980,6 +1012,7 @@ const defaultConfig: PluginConfig = {
         permission: "allow",
         showCompression: false,
         summaryBuffer: true,
+        summaryBufferMinRatio: 0.2,
         maxContextLimit: 100000,
         minContextLimit: 50000,
         nudgeFrequency: 5,
@@ -1144,6 +1177,9 @@ function mergeCompress(
         permission: override.permission ?? base.permission,
         showCompression: override.showCompression ?? base.showCompression,
         summaryBuffer: override.summaryBuffer ?? base.summaryBuffer,
+        summaryBufferMinRatio: clampUnit(
+            override.summaryBufferMinRatio ?? base.summaryBufferMinRatio ?? 0,
+        ),
         maxContextLimit: override.maxContextLimit ?? base.maxContextLimit,
         minContextLimit: override.minContextLimit ?? base.minContextLimit,
         // ponytail: per-key additive merge (Set-union by providerID/modelID).
@@ -1204,6 +1240,17 @@ function mergeCompress(
 export function clampRatio(value: number): number {
     if (typeof value !== "number" || !Number.isFinite(value)) return 0.7
     if (value <= 0) return 0.7
+    if (value > 1) return 1
+    return value
+}
+
+// ponytail: < not <= so summaryBufferMinRatio=0 stays a valid "off" knob;
+// clampRatio rejects 0 because ratio=0 there would mean "no compaction"
+// (meaningless). clampUnit allows 0 so the min-buffer can be cleanly disabled
+// without flipping summaryBuffer off.
+export function clampUnit(value: number): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) return 0
+    if (value < 0) return 0
     if (value > 1) return 1
     return value
 }
