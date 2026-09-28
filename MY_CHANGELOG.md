@@ -1,5 +1,27 @@
 # MY_CHANGELOG.md - Personal Change History
 
+## 2026-09-28 - Backport Hallucination-Strip Suffix Regex (V1 Backport Unit 1)
+
+- **Branch:** `fork/dcp-3.1.15-m1`
+- **Triggered by:** Unit 1 of a 3-commit upstream V1 backport. Two trailing-echo cases surfaced in the upstream issue tracker: #555 (`m0340</parameter>` style artifact when a model closes with the wrong tag) and #556 (inline `<dcp-message-id>m0370</dcp-message-id>` echoes with attribute variants like `priority="low">`). The existing paired/unpaired regex pair (`DCP_PAIRED_TAG_REGEX`, `DCP_UNPAIRED_TAG_REGEX`) at `lib/messages/utils.ts:10-11` handles complete echo pairs but misses partial echoes where the opening tag is lost, the wrong closing tag is emitted, or the trailing fragment carries attribute noise between tag-name and `>`. Upstream commits: `acb1fdc5` (#555), `f236e0de` (#556).
+- **Changes:**
+    - **`lib/messages/utils.ts`** (lines 12-19): added two new regex declarations immediately after `DCP_UNPAIRED_TAG_REGEX`. `INJECTED_MESSAGE_ID_SUFFIX_REGEX` (line 18) and `HALLUCINATED_PARAMETER_SUFFIX_REGEX` (line 19) are both anchored to a `(?<=\n)` lookbehind with a `\s*$` tail, so they only fire at the natural end-of-message boundary — never inline in prose.
+    - **Load-bearing order comment** (lines 12-17): added a `ponytail:` block immediately above the new regexes pinning the execution order. Suffix regexes MUST run BEFORE `DCP_PAIRED_TAG_REGEX` / `DCP_UNPAIRED_TAG_REGEX` because the generic unpaired regex would otherwise greedily consume the trailing `</dcp-message-id>` and the suffix regex would fail to match. The `(?<=\n)` lookbehind is the entire reason this is safe: only a model-echoed trailing artifact matches, never an inline mention in prose.
+    - **`stripHallucinationsFromString`** (lines 216-223): body rewritten. Now computes `withoutKnownSuffixes` first via the two new regexes, then applies the existing paired/unpaired regexes against the result. Same external signature, no caller change required. `stripHallucinations` (lines 225-241, the loop caller) and the `subagent-results.ts:59` caller are untouched.
+    - **`tests/message-priority.test.ts`** (lines 1215-1244): three new `test(...)` blocks added immediately after the existing `hallucination stripping does not affect non-dcp tags` test (line 1208) and before the `issue #463` test (line 1246):
+        - (a) `hallucination stripping preserves content when dcp-message-id is mentioned in text (issue #556)` — inline `<dcp-message-id>` mention in the middle of a sentence is preserved (no false positive from the new suffix regex).
+        - (b) `hallucination stripping handles priority on injected message-id suffixes` — same case with `priority="low">m0370` attribute on the trailing tag (covers the `[^>]*` attribute-tolerance inside the regex).
+        - (c) `hallucination stripping removes trailing mXXXX</parameter> artifact (issue #555)` — `m0340</parameter>` trailing fragment stripped via `HALLUCINATED_PARAMETER_SUFFIX_REGEX`.
+- **Reason:** Models occasionally echo injected message-id tags back into their assistant-text response. The paired-tag regex handles complete pairs but misses partial echoes (lost opening tag, or closed with the wrong tag like `</parameter>`). The two upstream-blessed suffix-anchored regexes catch those cases. The `(?<=\n)` lookbehind is the load-bearing detail that prevents false positives mid-message — without it the regex would chew up inline tag mentions in code blocks or documentation. Per `docs/features/PRUNING.md`, `stripHallucinationsFromString` is step 1 of `experimental.chat.messages.transform`; the source of injected IDs is `lib/messages/injectMessageIds` (step 11, last). The trailing-echo bug surfaces at the NEXT transform after injection, when the model's response containing the echoed artifact reaches `stripHallucinations` for the next turn.
+- **Caveats:**
+    - **Suffix-first order is load-bearing.** If a future refactor swaps the order in `stripHallucinationsFromString` (suffix regexes AFTER paired/unpaired), `DCP_UNPAIRED_TAG_REGEX` will greedily eat the `</dcp-message-id>` first and the suffix regex will fail to match. The `ponytail:` comment at lines 12-17 is the why-record; do not "clean up" the order without re-reading it.
+    - **Three new tests, no new test file.** Test additions are inline within the existing `message-priority.test.ts` hallucination-stripping cluster. No new file, no fixture updates.
+    - **v2 fork-protocol unrelated.** None of the v2 recovery/state-shape invariants are touched by this backport. `compress.forkSchemaVersion` unchanged, no `recoveryForced` / `nonCompactingRunCount` / `recoveryFadeCounter` round-trip changes, no schema bump.
+    - **Units 2 and 3 follow in separate dispatches.** This entry covers Unit 1 only.
+- **Files:** `lib/messages/utils.ts`, `tests/message-priority.test.ts`.
+- **Test additions:** 3 new tests in `tests/message-priority.test.ts` (lines 1215-1244). Inline additions within the existing hallucination-stripping cluster; no new test file created.
+- **Verification:** implementation final at the source-code level; the verification command pass (`npm run build` / `npm run typecheck` / `npm test`) is bundled with the dispatch that closes all three V1 backport units together, not per-unit.
+
 ## 2026-09-10 - Harden Nudge Prompts: Compress Tool Invocation Contract
 
 - **Branch:** `fork/dcp-3.1.15-m1`
